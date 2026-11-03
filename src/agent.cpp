@@ -555,13 +555,12 @@ static void drawKraken(AgState s, int frame) {
 
 // ---- skin 1: aura ----------------------------------------------------------------------------------
 // A hollow ring woven from many thin strands that drift out of phase, like a voice made visible.
-// Cyan -> blue -> violet on black, drawn on a 2 px pixel grid. It swells with your voice while
+// Cyan -> blue -> violet on black, drawn as smooth 1 px hairlines. It swells with your voice while
 // listening and ripples while talking.
 
-#define OP 2
 #define RGB(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
-#define STRANDS 11
-#define STEPS 300
+#define STRANDS 18
+#define STEPS 120
 
 static uint16_t dim565(uint16_t c, int pct) {
   int r = (c >> 11) * pct / 100, g = ((c >> 5) & 63) * pct / 100, b = (c & 31) * pct / 100;
@@ -592,27 +591,32 @@ static void drawOrb(AgState s, int frame) {
 
   cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
   for (int i = 0; i < 10; i++)   // sparse dust
-    if ((frame + i * 5) % 9 < 6) cv->fillRect(((i * 53 + 17) % 120) * OP, ((i * 29 + 5) % 66) * OP, OP, OP, dim565(PAL[i % 3], 45));
+    if ((frame + i * 5) % 9 < 6) cv->drawPixel((i * 53 + 17) % 240, (i * 29 + 5) % 132, dim565(PAL[i % 3], 55));
 
   for (int i = 0; i < STRANDS; i++) {
     float u = i / (STRANDS - 1.0f);
-    int bright = sleep ? 38 : (int)(45 + 55 * sinf(3.14159f * u));   // outer strands fade
-    for (int j = 0; j < STEPS; j++) {
-      float th = j * TAU / STEPS;
-      float r = R + (u - 0.5f) * 8.0f * fan;
-      for (int k = 0; k < 5; k++) r += AMPL[k] * wob * sinf((k + 2) * th + t * SPEED[k] + u * fan * (0.9f + 0.3f * k) + PHASE[k]);
+    int bright = sleep ? 38 : (int)(40 + 60 * sinf(3.14159f * u));   // outer strands fade
+    int px = 0, py = 0, fx = 0, fy = 0;
+    for (int j = 0; j <= STEPS; j++) {
+      float th = (j % STEPS) * TAU / STEPS;
+      float r = R + (u - 0.5f) * 11.0f * fan;
+      for (int k = 0; k < 5; k++) r += AMPL[k] * wob * sinf((k + 2) * th + t * SPEED[k] + u * fan * (1.2f + 0.4f * k) + PHASE[k]);
       if (s == AG_SPEAKING) r += 2.5f * pulse * sinf(9 * th + frame * 1.3f + u * 3);
-      r = constrain(r, 3.0f, 61.0f);
-      int x = (int)(cx + r * cosf(th + rot)) / OP * OP, y = (int)(cy + r * 0.98f * sinf(th + rot)) / OP * OP;
-      float ph = u * 0.7f + th / TAU * 0.6f + t * (busy ? 0.25f : 0.08f);
-      uint16_t c = (err ? PAL_ERR : PAL)[(int)((ph - floorf(ph)) * 6)];
-      cv->fillRect(x, y, OP, OP, dim565(c, bright));
+      r = constrain(r, 3.0f, 62.0f);
+      int x = (int)(cx + r * cosf(th + rot)), y = (int)(cy + r * 0.98f * sinf(th + rot));
+      if (j == 0) { fx = x; fy = y; }
+      else {
+        float ph = u * 0.7f + th / TAU * 0.6f + t * (busy ? 0.25f : 0.08f);
+        uint16_t c = (err ? PAL_ERR : PAL)[(int)((ph - floorf(ph)) * 6)];
+        cv->drawLine(px, py, j == STEPS ? fx : x, j == STEPS ? fy : y, dim565(c, bright));
+      }
+      px = x; py = y;
     }
   }
   if (happy) {   // sparkles around the ring
     for (int i = 0; i < 8; i++) {
       float ang = i * 0.785f + frame * 0.6f;
-      cv->fillRect((int)(cx + (R + 16) * cosf(ang)) / OP * OP, (int)(cy + (R + 12) * sinf(ang)) / OP * OP, OP * 2, OP * 2, (i % 2) ? COL_TEXT : PAL[4]);
+      cv->fillCircle((int)(cx + (R + 16) * cosf(ang)), (int)(cy + (R + 12) * sinf(ang)), 2, (i % 2) ? COL_TEXT : PAL[4]);
     }
   }
   if (s == AG_LISTENING) {
