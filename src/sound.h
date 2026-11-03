@@ -3,6 +3,8 @@
 enum Sound { SND_CLICK, SND_START, SND_PAUSE, SND_ALARM, SND_BREAK_OVER, SND_HOUR };
 void soundInit();             // call after Wire.begin; codec + I2S + playback task
 void soundPlay(Sound s);      // non-blocking, queued
+int soundVolume();            // master volume, 0-100
+void soundSetVolume(int percent, bool save);   // save=false while dragging, true on release
 
 // Microphone (ES7210) and raw playback on the same I2S bus, used by the voice agent.
 size_t micRead(int16_t *stereo, size_t frames);          // blocking; returns frames read (L,R interleaved)

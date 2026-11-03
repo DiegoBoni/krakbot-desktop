@@ -4,6 +4,7 @@
 #include <ESP_I2S.h>
 #include "es8311.h"
 #include "es7210.h"
+#include <Preferences.h>
 
 #define PA_CTRL 7
 #define I2S_MCLK 8
@@ -13,13 +14,15 @@
 #define MIC_GAIN ES7210_MIC_GAIN_24DB
 #define I2S_LRC 10
 #define RATE 16000
-#define VOLUME 70           // codec volume 0-100
+#define VOL_DEFAULT 70      // user level 0-100
 #define AMPLITUDE 9000      // square-wave peak, of 32767
 
 static I2SClass i2s;
 static QueueHandle_t q;
 static int amp = AMPLITUDE;
 static volatile bool streaming = false;
+static es8311_handle_t es;
+static int level = VOL_DEFAULT;
 
 struct Note { uint16_t hz, ms; };   // hz 0 = silence
 
@@ -76,14 +79,31 @@ static void soundTask(void *) {
   }
 }
 
+// User level 0-100 maps linearly in dB (about -40 dB .. +9 dB on the DAC); 0 mutes.
+static void applyLevel() {
+  if (es) es8311_voice_volume_set(es, level ? 44 + level * 38 / 100 : 0, NULL);
+}
+
+void soundSetVolume(int percent, bool save) {
+  level = constrain(percent, 0, 100);
+  applyLevel();
+  if (!save) return;
+  Preferences pr;
+  if (pr.begin("orient", false)) { pr.putUChar("vol", level); pr.end(); }
+}
+
+int soundVolume() { return level; }
+
 void soundInit() {
   pinMode(PA_CTRL, OUTPUT);
   digitalWrite(PA_CTRL, HIGH);
-  es8311_handle_t es = es8311_create(I2C_NUM_0, ES8311_ADDRRES_0);
+  es = es8311_create(I2C_NUM_0, ES8311_ADDRRES_0);
   const es8311_clock_config_t clk = {false, false, true, RATE * 256, RATE};
   es8311_init(es, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16);
   es8311_sample_frequency_config(es, RATE * 256, RATE);
-  es8311_voice_volume_set(es, VOLUME, NULL);
+  Preferences pr;
+  if (pr.begin("orient", true)) { level = constrain((int)pr.getUChar("vol", VOL_DEFAULT), 0, 100); pr.end(); }
+  applyLevel();
   es8311_microphone_config(es, false);
 
   es7210_dev_handle_t adc = nullptr;

@@ -736,6 +736,13 @@ void agentEnter() {
   if (task) xTaskNotify(task, B_ENTER, eSetBits);
 }
 
+void agentRepaint() {
+  if (!active) return;
+  gfx->fillScreen(COL_BG);
+  needRepaint = true;
+  histVerSeen = ~0u;
+}
+
 void agentLeave() {
   active = false;
   held = false;

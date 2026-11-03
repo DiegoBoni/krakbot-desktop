@@ -10,6 +10,7 @@
 #include "clock.h"
 #include "brightness.h"
 #include "agent.h"
+#include "fx.h"
 #include "SensorQMI8658.hpp"
 
 #define GFX_BL 46
@@ -66,6 +67,69 @@ void drawReadout(float ax, float ay, float az) {
 
 Pose current = POSE_NONE, candidate = POSE_NONE;
 uint32_t candidateSince = 0;
+bool screenOff = false;   // panel + backlight dark (lying flat, or PWR pressed)
+bool manualOff = false;   // PWR toggled the screen off
+
+FxApp fxFor(Pose p) { return p == POSE_UP ? FX_POMODORO : p == POSE_LEFT ? FX_CLOCK : FX_AGENT; }
+
+// Brings app `p` on screen: old content collapses, the new orientation splashes, then the app paints.
+void enterApp(Pose p, bool fromDark) {
+  if (fromDark) {
+    gfx->displayOn();
+    gfx->setRotation(ROT[p]);
+    gfx->fillScreen(C_BLACK);
+    backlightSleep(false);
+    screenOff = false;
+  } else {
+    fxCloseOld();
+    gfx->setRotation(ROT[p]);
+  }
+  fxSplash(fxFor(p));
+  if (p == POSE_UP) pomodoroEnter();
+  else if (p == POSE_LEFT) clockEnter();
+  else agentEnter();
+}
+
+void goDark() {
+  if (current == POSE_RIGHT) agentLeave();
+  backlightSleep(true);
+  gfx->displayOff();
+  screenOff = true;
+}
+
+void repaintApp() {
+  if (current == POSE_UP) pomodoroEnter();
+  else if (current == POSE_LEFT) clockEnter();
+  else if (current == POSE_RIGHT) agentRepaint();
+}
+
+// Vertical drag anywhere on screen = master volume (up louder). Taps go to the app on lift.
+void handleTouch(const TouchEvent &te) {
+  static bool volDrag = false;
+  static int volStart = 0;
+  if (te.kind == TOUCH_DRAG) {
+    // panel-native displacement -> displacement along the screen's current vertical axis
+    int ldy = current == POSE_UP ? te.dy : current == POSE_RIGHT ? -te.dx : te.dx;
+    if (!volDrag) {
+      if (abs(ldy) < 14) return;
+      volDrag = true;
+      volStart = soundVolume();
+    }
+    int v = constrain(volStart - ldy * 100 / 140, 0, 100);
+    soundSetVolume(v, false);
+    fxVolumeShow(v);
+  } else if (te.kind == TOUCH_DRAG_END) {
+    if (volDrag) {
+      volDrag = false;
+      soundSetVolume(soundVolume(), true);
+      soundPlay(SND_CLICK);   // sample of the new level
+    }
+  } else if (te.kind == TOUCH_TAP && !fxOverlayActive()) {
+    if (Serial) Serial.printf("tap x=%d y=%d\n", te.x, te.y);
+    if (current == POSE_RIGHT) agentTouch();
+    if (current == POSE_UP) pomodoroTouch(te.x, te.y);
+  }
+}
 
 void setup() {
   pinMode(BAT_HOLD, OUTPUT);
@@ -103,15 +167,8 @@ void loop() {
       Pose prev = current;
       if (prev == POSE_RIGHT) agentLeave();
       current = p;
-      if (prev == POSE_FLAT) gfx->displayOn();
-      if (current == POSE_FLAT) { backlightSleep(true); gfx->displayOff(); }
-      else {
-        if (current == POSE_UP) { gfx->setRotation(ROT[POSE_UP]); pomodoroEnter(); }
-        else if (current == POSE_LEFT) { gfx->setRotation(ROT[POSE_LEFT]); clockEnter(); }
-        else if (current == POSE_RIGHT) { gfx->setRotation(ROT[POSE_RIGHT]); agentEnter(); }
-        else drawPose(current, acc.x, acc.y, acc.z);
-        if (prev == POSE_FLAT) backlightSleep(false);   // light up only after the new screen is painted
-      }
+      if (p == POSE_FLAT || manualOff) { if (!screenOff) goDark(); }
+      else enterApp(p, screenOff);
     }
     static uint32_t lastLog = 0;
     if (now - lastLog > 300) {
@@ -119,20 +176,29 @@ void loop() {
       if (Serial) Serial.printf("ax=%.2f ay=%.2f az=%.2f pose=%d\n", acc.x, acc.y, acc.z, (int)current);
     }
   }
-  int tx, ty;
-  if (touchPressed(tx, ty)) {
-    if (Serial) Serial.printf("touch x=%d y=%d\n", tx, ty);
-    if (current == POSE_RIGHT) agentTouch();
-    if (current == POSE_UP) pomodoroTouch(tx, ty);   // ignored while flat/asleep
+  TouchEvent te = touchPoll();
+  if (te.kind != TOUCH_NONE) {
+    if (!screenOff) handleTouch(te);
+    else if (te.kind == TOUCH_TAP && manualOff && current != POSE_FLAT) {   // a tap wakes a PWR-blanked screen
+      manualOff = false;
+      enterApp(current, true);
+    }
   }
   BtnEvent plus = buttonsPoll(BTN_PLUS), boot = buttonsPoll(BTN_BOOT), pwr = buttonsPoll(BTN_PWR);
   if (Serial && (plus || boot || pwr)) Serial.printf("keys plus=%d boot=%d pwr=%d\n", plus, boot, pwr);
-  if (current == POSE_UP) {
+  if (pwr == EV_LONG) fxPowerOff();
+  if (pwr == EV_CLICK && current != POSE_FLAT && current != POSE_NONE) {
+    manualOff = !manualOff;
+    if (manualOff) { if (!screenOff) goDark(); }
+    else if (screenOff) enterApp(current, true);
+  }
+  bool live = !screenOff;
+  if (live && current == POSE_UP) {
     if (plus == EV_CLICK) pomodoroAction(POMO_MAIN);
     if (plus == EV_LONG) pomodoroAction(POMO_RESET);
     if (boot == EV_CLICK) pomodoroAction(POMO_NEXT);
   }
-  if (current == POSE_RIGHT) {
+  if (live && current == POSE_RIGHT) {
     static bool talking = false;
     bool held = buttonsHeld(BTN_PLUS);
     if (held && !talking) agentPress();
@@ -141,13 +207,15 @@ void loop() {
     if (boot == EV_CLICK) agentBoot();
     if (boot == EV_LONG) agentSkinNext();
   }
-  if (current == POSE_LEFT) {
+  if (live && current == POSE_LEFT) {
     if (boot == EV_CLICK) { backlightCycle(); soundPlay(SND_CLICK); }
     if (plus == EV_CLICK) clockToggleChime();
   }
-  agentTick(current == POSE_RIGHT);
-  pomodoroTick(current == POSE_UP);
+  if (fxOverlayTick()) repaintApp();
+  bool show = live && !fxOverlayActive();
+  agentTick(show && current == POSE_RIGHT);
+  pomodoroTick(show && current == POSE_UP);
   clockBackground();
-  clockTick(current == POSE_LEFT);
-  delay(current == POSE_FLAT ? 40 : 5);   // idle faster polling while the screen is off
+  clockTick(show && current == POSE_LEFT);
+  delay(screenOff ? 40 : 5);   // idle faster polling while the screen is off
 }

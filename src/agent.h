@@ -9,3 +9,4 @@ void agentRelease();               // PLUS let go
 void agentBoot();                  // BOOT: history browser when idle, cancels the turn when busy
 void agentTouch();                 // screen tap: wakes Krakbot and makes it react; leaves the history
 void agentSkinNext();               // long BOOT: switch character (look + voice)
+void agentRepaint();                // something drew over the screen (overlay): paint everything again
