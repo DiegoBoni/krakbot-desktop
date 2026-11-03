@@ -87,14 +87,16 @@ def mouth(f, kind):
     if kind == 0:     # cheeky smirk: flat on the left, one corner curled up
         put(f, [(21, 32), (22, 32), (23, 32), (24, 32), (25, 31)], LIP)
         put(f, [(26, 30)], BLUSH)
-    elif kind == 1:   # small open smile
-        put(f, [(21, 31), (25, 31)], LIP)
-        rect(f, 22, 32, 24, 33, MOUTH)
+    elif kind == 1:   # small open smile: half-moon, same shape as the laugh but smaller
+        put(f, [(x, 32) for x in range(21, 26)], MOUTH)
+        put(f, [(x, 33) for x in range(22, 25)], MOUTH)
         put(f, [(23, 33)], TONGUE)
-    else:             # wide open
-        put(f, [(20, 31), (26, 31)], LIP)
-        rect(f, 21, 32, 25, 34, MOUTH)
-        rect(f, 22, 34, 24, 34, TONGUE)
+    else:             # wide laugh: teeth on top, rounded bottom, tongue
+        put(f, [(x, 32) for x in range(20, 27)], MOUTH)
+        put(f, [(x, 32) for x in range(21, 26)], WHITE)
+        put(f, [(x, 33) for x in range(21, 26)], MOUTH)
+        put(f, [(x, 34) for x in range(22, 25)], MOUTH)
+        put(f, [(23, 34), (24, 34), (22, 33), (23, 33)], TONGUE)
     # rosy cheeks on every frame
     put(f, [(14, 29), (15, 29), (13, 30), (14, 30), (15, 30), (16, 30)], BLUSH)
     put(f, [(30, 28), (31, 28), (29, 29), (30, 29), (31, 29), (32, 29)], BLUSH)
