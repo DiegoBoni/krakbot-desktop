@@ -1,114 +1,76 @@
 #!/usr/bin/env python3
-"""Builds src/avatar_data.h (46x46 indexed frames) from assets/avatar_source.webp.
+"""Builds src/avatar_data.h (69x69 indexed frames) from the Frida atlas image.
 
-Frames are eye x mouth combinations derived from the single source portrait:
-  eyes : 0 open, 1 closed (blink / sleep), 2 wink (the portrait as drawn)
-  mouth: 0 closed smile, 1 small open, 2 wide open
-Frame index = eye * 3 + mouth. Index 255 is transparent (outside the round avatar).
+assets/frida_atlas_v2.webp is a 3x3 sheet. Frame index = row * 3 + column:
+  rows (eyes)    : 0 open, 1 closed (blink / sleep), 2 wink
+  columns (mouth): 0 closed smile, 1 small open, 2 laughing
+The white sheet background is removed (flood fill from the tile edges) and every tile is
+re-centred so the head does not jump when frames swap. Index 255 is transparent.
 
-Usage: python3 tools/make_avatar.py [--preview out.png]
+Also writes assets/frida_atlas.png (69 px tiles, transparent) and assets/frida_atlas_x8.png.
+
+Usage: python3 tools/make_avatar.py
 """
-import sys
 from pathlib import Path
+
+import numpy as np
 from PIL import Image
+from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parent.parent
-N = 46
-CROP_X, CROP = 275, 733
+N = 69            # tile size on the device grid (drawn at 2x = 138 px)
+COLORS = 28
 
-img = Image.open(ROOT / "assets" / "avatar_source.webp").convert("RGB")
-small = img.crop((CROP_X, 0, CROP_X + CROP, CROP)).resize((N, N), Image.BOX)
-quant = small.quantize(colors=20, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-pal_raw = quant.getpalette()[: 20 * 3]
-palette = [tuple(pal_raw[i * 3 : i * 3 + 3]) for i in range(20)]
-base = [[quant.getpixel((x, y)) for x in range(N)] for y in range(N)]
+sheet = Image.open(ROOT / "assets" / "frida_atlas_v2.webp").convert("RGB")
+T = sheet.width // 3
 
 
-def col(rgb):
-    if rgb not in palette:
-        palette.append(rgb)
-    return palette.index(rgb)
+def tile_rgba(col, row):
+    """Crop one tile and make the white sheet background transparent."""
+    tile = np.asarray(sheet.crop((col * T, row * T, (col + 1) * T, (row + 1) * T))).astype(int)
+    nearwhite = tile.min(axis=2) > 228
+    labels, _ = ndimage.label(nearwhite)
+    edge = set(labels[0, :]) | set(labels[-1, :]) | set(labels[:, 0]) | set(labels[:, -1])
+    edge.discard(0)
+    bg = np.isin(labels, list(edge))
+    bg = ndimage.binary_dilation(bg, iterations=1)   # eat the anti-aliased fringe
+    return tile, ~bg
 
 
-def nearest(rgb):
-    return min(range(len(palette)), key=lambda i: sum((a - b) ** 2 for a, b in zip(palette[i], rgb)))
-
-
-SKIN = nearest((255, 204, 190))
-DARK = nearest((16, 16, 48))
-BLUE = nearest((40, 90, 190))
-WHITE = col((255, 255, 255))
-IRIS = col((70, 140, 255))
-MOUTH = col((150, 40, 70))
-TONGUE = col((255, 110, 150))
-LIP = col((235, 120, 140))
-
-
-def put(f, pts, c):
-    for x, y in pts:
-        f[y][x] = c
-
-
-def rect(f, x0, y0, x1, y1, c):
-    for y in range(y0, y1 + 1):
-        for x in range(x0, x1 + 1):
-            f[y][x] = c
-
-
-def clone(f):
-    return [row[:] for row in f]
-
-
-# --- eyes ---------------------------------------------------------------------------------------
-wink = clone(base)                                   # right eye drawn as a wink, left eye open
-
-open_ = clone(base)                                  # right eye = mirror image of the left one
-rect(open_, 27, 22, 35, 28, SKIN)                    # erase the wink stroke
-for y in range(22, 29):
-    for x in range(11, 18):
-        open_[y][45 - x] = base[y][x]                # mirror about the face centre line (x = 22.5)
-
-closed = clone(wink)                                 # left eye shut with the same kind of stroke
-rect(closed, 10, 23, 17, 28, SKIN)
-put(closed, [(x, 25) for x in range(11, 17)], DARK)
-
-eyes = [open_, closed, wink]
-
-# --- mouths -------------------------------------------------------------------------------------
-# The face is turned slightly, its centre line sits near x = 22.5. Mouths are centred there.
-BLUSH = col((255, 150, 172))
-
-
-def mouth(f, kind):
-    f = clone(f)
-    rect(f, 17, 30, 29, 35, SKIN)                     # wipe the original smile
-    if kind == 0:     # cheeky smirk: flat on the left, one corner curled up
-        put(f, [(21, 32), (22, 32), (23, 32), (24, 32), (25, 31)], LIP)
-        put(f, [(26, 30)], BLUSH)
-    elif kind == 1:   # small open smile: half-moon, same shape as the laugh but smaller
-        put(f, [(x, 32) for x in range(21, 26)], MOUTH)
-        put(f, [(x, 33) for x in range(22, 25)], MOUTH)
-        put(f, [(23, 33)], TONGUE)
-    else:             # wide laugh: teeth on top, rounded bottom, tongue
-        put(f, [(x, 32) for x in range(20, 27)], MOUTH)
-        put(f, [(x, 32) for x in range(21, 26)], WHITE)
-        put(f, [(x, 33) for x in range(21, 26)], MOUTH)
-        put(f, [(x, 34) for x in range(22, 25)], MOUTH)
-        put(f, [(23, 34), (24, 34), (22, 33), (23, 33)], TONGUE)
-    # rosy cheeks on every frame
-    put(f, [(14, 29), (15, 29), (13, 30), (14, 30), (15, 30), (16, 30)], BLUSH)
-    put(f, [(30, 28), (31, 28), (29, 29), (30, 29), (31, 29), (32, 29)], BLUSH)
-    return f
-
-
-frames = [mouth(e, m) for e in eyes for m in range(3)]
-
-# round avatar: everything outside the circle is transparent
-for f in frames:
+def to_cells(idx, opaque, ox, oy):
+    """Most common palette index of the opaque pixels in each cell; (ox, oy) shifts the window."""
+    cell = T / N
+    out = np.full((N, N), 255, dtype=np.uint8)
     for y in range(N):
         for x in range(N):
-            if (x - (N - 1) / 2) ** 2 + (y - (N - 1) / 2) ** 2 > (N / 2 + 0.2) ** 2:
-                f[y][x] = 255
+            x0, x1 = int(round(x * cell)) + ox, int(round((x + 1) * cell)) + ox
+            y0, y1 = int(round(y * cell)) + oy, int(round((y + 1) * cell)) + oy
+            if x0 < 0 or y0 < 0 or x1 > T or y1 > T:
+                continue
+            m = opaque[y0:y1, x0:x1]
+            if m.mean() < 0.5:
+                continue
+            out[y, x] = np.bincount(idx[y0:y1, x0:x1][m], minlength=COLORS).argmax()
+    return out
+
+
+tiles = []
+for i in range(9):
+    tile, opaque = tile_rgba(i % 3, i // 3)
+    ys, xs = np.where(opaque)
+    tiles.append((tile, opaque, int((xs.min() + xs.max()) // 2 - T // 2), int(ys.min())))
+top = min(t[3] for t in tiles)
+
+# one shared palette for the whole sheet, quantised before downsampling so colours stay crisp
+stack = np.concatenate([t[0] for t in tiles], axis=0).astype(np.uint8)
+q = Image.fromarray(stack).quantize(colors=COLORS, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+idx_all = np.asarray(q)
+raw = q.getpalette()[: COLORS * 3]
+palette = [tuple(raw[i * 3 : i * 3 + 3]) for i in range(COLORS)]
+frames = []
+for k, (tile, opaque, dx, ty) in enumerate(tiles):
+    grid = to_cells(idx_all[k * T : (k + 1) * T], opaque, dx, ty - top)
+    frames.append([[int(v) for v in row] for row in grid])
 
 
 def rgb565(c):
@@ -122,13 +84,10 @@ out.append("#define AV_TRANSPARENT 255")
 out.append(f"static const uint16_t AV_PAL[{len(palette)}] = {{" + ", ".join(f"0x{rgb565(c):04X}" for c in palette) + "};")
 out.append(f"static const uint8_t AV_FRAMES[{len(frames)}][{N * N}] = {{")
 for f in frames:
-    flat = [v for row in f for v in row]
-    out.append("  {" + ",".join(str(v) for v in flat) + "},")
+    out.append("  {" + ",".join(str(v) for row in f for v in row) + "},")
 out.append("};")
 (ROOT / "src" / "avatar_data.h").write_text("\n".join(out) + "\n")
-print(f"{len(palette)} colours, {len(frames)} frames")
 
-# Atlas for editing outside the repo: 3 columns (mouth 0..2) x 3 rows (eyes: open, closed, wink), 46x46 tiles.
 atlas = Image.new("RGBA", (3 * N, 3 * N), (0, 0, 0, 0))
 for i, f in enumerate(frames):
     for y in range(N):
@@ -137,15 +96,4 @@ for i, f in enumerate(frames):
                 atlas.putpixel(((i % 3) * N + x, (i // 3) * N + y), palette[f[y][x]] + (255,))
 atlas.save(ROOT / "assets" / "frida_atlas.png")
 atlas.resize((3 * N * 8, 3 * N * 8), Image.NEAREST).save(ROOT / "assets" / "frida_atlas_x8.png")
-
-if "--preview" in sys.argv:
-    S = 8
-    sheet = Image.new("RGB", (3 * N * S, 3 * N * S), (0, 0, 0))
-    for i, f in enumerate(frames):
-        tile = Image.new("RGB", (N, N), (0, 0, 0))
-        for y in range(N):
-            for x in range(N):
-                if f[y][x] != 255:
-                    tile.putpixel((x, y), palette[f[y][x]])
-        sheet.paste(tile.resize((N * S, N * S), Image.NEAREST), ((i % 3) * N * S, (i // 3) * N * S))
-    sheet.save(sys.argv[sys.argv.index("--preview") + 1])
+print(f"{len(palette)} colours, {len(frames)} frames")

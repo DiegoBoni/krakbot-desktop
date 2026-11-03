@@ -18,6 +18,9 @@
 #ifndef N8N_WEBHOOK_URL
 #define N8N_WEBHOOK_URL ""
 #endif
+#ifndef N8N_WEBHOOK_URL_FRIDA
+#define N8N_WEBHOOK_URL_FRIDA ""
+#endif
 
 #define STT_URL "https://api.groq.com/openai/v1/audio/transcriptions"
 #define STT_MODEL "whisper-large-v3-turbo"
@@ -53,6 +56,11 @@ static const Skin SKINS[] = {
 };
 #define SKIN_COUNT 2
 static volatile int skinIdx = 0;
+
+// Each character can have its own n8n flow (and so its own personality); Frida falls back to the main one.
+static const char *hookUrl() {
+  return (skinIdx == 1 && strlen(N8N_WEBHOOK_URL_FRIDA)) ? N8N_WEBHOOK_URL_FRIDA : N8N_WEBHOOK_URL;
+}
 
 enum AgState { AG_IDLE, AG_CONNECTING, AG_LISTENING, AG_TRANSCRIBING, AG_THINKING, AG_SPEAKING, AG_ERROR, AG_SLEEP, AG_HAPPY };
 
@@ -224,11 +232,10 @@ static String askAgent(const String &msg) {
   HTTPClient http;
   http.setTimeout(60000);
   String out;
-  if (!http.begin(client, N8N_WEBHOOK_URL)) return "";
+  if (!http.begin(client, hookUrl())) return "";
   http.addHeader("Content-Type", "application/json");
   JsonDocument doc;
   doc["message"] = msg;
-  doc["skin"] = SKINS[skinIdx].name;   // lets the n8n flow switch personality
   String body;
   serializeJson(doc, body);
   int code = http.POST(body);
@@ -556,7 +563,7 @@ static void drawKraken(AgState s, int frame) {
 
 
 // ---- skin 1: Frida --------------------------------------------------------------------------
-// 46x46 portrait (tools/make_avatar.py) shown at 3x. Eyes and mouth swap between prebuilt frames.
+// 69x69 portrait (tools/make_avatar.py) shown at 2x. Eyes and mouth swap between prebuilt frames.
 
 static const uint8_t HEART[6] = {0x1B, 0x3F, 0x3F, 0x1E, 0x0C, 0x04};   // 7 wide, bit 5 = left
 
@@ -574,7 +581,7 @@ static void drawAvatar(AgState s, int frame) {
 
   int bob = sleep ? ((frame % 6) < 3 ? 0 : 3) : happy ? ((frame % 2) ? -4 : 0) : eq ? ((frame % 2) ? 0 : 3) : ((frame % 10) < 5 ? 0 : 3);
   int shake = err ? ((frame % 2) ? 3 : -3) : 0;
-  const int S = 3, X0 = (240 - AV_N * S) / 2 + shake, Y0 = 1 + (bob > 0 ? bob : 0);
+  const int S = (CANVAS_H - 2) / AV_N, X0 = (240 - AV_N * S) / 2 + shake, Y0 = 1 + (bob > 0 ? bob : 0);
 
   uint16_t pal[sizeof(AV_PAL) / sizeof(AV_PAL[0])];
   for (size_t i = 0; i < sizeof(pal) / sizeof(pal[0]); i++) {
@@ -738,7 +745,7 @@ void agentEnter() {
   histMode = false;
   needRepaint = true;
   lastActivity = millis();
-  bool keys = strlen(GROQ_API_KEY) && strlen(OPENAI_API_KEY) && strlen(N8N_WEBHOOK_URL);
+  bool keys = strlen(GROQ_API_KEY) && strlen(OPENAI_API_KEY) && strlen(hookUrl());
   showText(keys ? "MANTEN [+] PARA HABLAR" : "FALTAN CLAVES EN SECRETS.H", keys ? COL_DIM : 0xF800);
   gfx->fillScreen(COL_BG);
   if (task) xTaskNotify(task, B_ENTER, eSetBits);
@@ -757,7 +764,7 @@ void agentPress() {
   if (histMode) exitHistory();
   if (state == AG_SPEAKING) { abortReq = true; return; }
   if (state != AG_IDLE && state != AG_ERROR && state != AG_SLEEP) return;
-  if (!strlen(GROQ_API_KEY) || !strlen(OPENAI_API_KEY) || !strlen(N8N_WEBHOOK_URL)) return;
+  if (!strlen(GROQ_API_KEY) || !strlen(OPENAI_API_KEY) || !strlen(hookUrl())) return;
   held = true;
   abortReq = false;
   state = AG_LISTENING;   // instant feedback; the worker takes over from here

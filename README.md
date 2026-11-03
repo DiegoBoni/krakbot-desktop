@@ -36,7 +36,7 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
 
 - **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
-- **Frida**: retrato pixel art de una chica de pelo rosa y azul, pícara y coqueta: parpadea, guiña de vez en cuando, mueve la boca al hablar, se ríe al tocarla y se duerme. Voz joven y juguetona (`nova`). Los frames salen de `assets/avatar_source.webp` con `python3 tools/make_avatar.py` (genera `src/avatar_data.h`).
+- **Frida**: retrato pixel art de una chica de pelo rosa y azul, pícara y coqueta: parpadea, guiña de vez en cuando, mueve la boca al hablar, se ríe al tocarla y se duerme. Voz joven y juguetona (`nova`). Los frames salen del atlas `assets/frida_atlas_v2.webp` (3×3: ojos abiertos / cerrados / guiño × boca cerrada / chica / risa) con `python3 tools/make_avatar.py`, que genera `src/avatar_data.h` y `assets/frida_atlas.png`.
 
 Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:
@@ -73,25 +73,35 @@ y completá `src/secrets.h`:
 | `WIFI_SSID` / `WIFI_PASS` | Tu red Wi-Fi de 2,4 GHz | tu router |
 | `GROQ_API_KEY` | Transcripción de voz (`gsk_...`) | https://console.groq.com/keys |
 | `OPENAI_API_KEY` | Voz de la respuesta (`sk-...`) | https://platform.openai.com/api-keys |
-| `N8N_WEBHOOK_URL` | URL de producción del webhook de n8n | ver el paso siguiente |
+| `N8N_WEBHOOK_URL` | URL de producción del webhook de n8n de Kraken | ver el paso siguiente |
+| `N8N_WEBHOOK_URL_FRIDA` | (opcional) webhook de n8n propio de Frida; si falta usa el de Kraken | ver el paso siguiente |
 
 Después compilá y subí con `pio run -t upload`. Si falta alguna clave, la pantalla del agente dice
 "FALTAN CLAVES EN SECRETS.H".
 
-#### 2. Flujo de n8n
-El flujo está en [`n8n/krakbot-workflow.json`](n8n/krakbot-workflow.json), sin credenciales:
+#### 2. Flujos de n8n (uno por personaje)
+Cada skin habla con su propio webhook, así cada personaje tiene su personalidad:
 
-1. En n8n: **Workflows → Import from file** y elegí ese JSON.
+| Skin | Flujo | Path del webhook |
+|---|---|---|
+| Kraken | [`n8n/krakbot-workflow.json`](n8n/krakbot-workflow.json) | `/webhook/krakbot` |
+| Frida | [`n8n/frida-workflow.json`](n8n/frida-workflow.json) | `/webhook/frida` |
+
+Los JSON no traen credenciales. Para cada uno:
+
+1. En n8n: **Workflows → Import from file** y elegí el JSON.
 2. Asigná tus credenciales en los nodos que las piden:
    - **OpenAI Chat Model**: tu credencial *OpenAI API*.
    - **MCP Client** (opcional, herramientas de Composio): una credencial *Header Auth* con tu clave de
      Composio. Si no lo querés, borrá el nodo.
 3. Activá el workflow (**Active**) y copiá la **Production URL** del nodo Webhook
-   (`https://TU-N8N/webhook/krakbot`, no la de `webhook-test`) en `N8N_WEBHOOK_URL`.
+   (`https://TU-N8N/webhook/krakbot` o `/webhook/frida`, no la de `webhook-test`) en
+   `N8N_WEBHOOK_URL` o `N8N_WEBHOOK_URL_FRIDA`.
 
-Flujo: Webhook (`POST /krakbot`, recibe `{"message": "...", "skin": "KRAKEN|FRIDA"}`) → AI Agent (GPT-5.1, memoria de ventana
-y personalidad de Kraken) → Respond to Webhook (`{"text": "..."}`). La personalidad (Kraken o Frida, según el `skin`) se define en el
-*System Message* del nodo AI Agent.
+Cada flujo: Webhook (`POST`, recibe `{"message": "..."}`) → AI Agent (GPT-5.1, memoria de ventana
+y personalidad) → Respond to Webhook (`{"text": "..."}`). La personalidad se cambia en el
+*System Message* del nodo AI Agent de cada flujo. Para sumar otro personaje, duplicá un flujo,
+cambiá el path del webhook y su prompt.
 
 #### 3. Voz
 Los skins (aspecto y voz) se definen en la tabla `SKINS` de `src/agent.cpp`: voz de OpenAI, instrucciones de estilo y cuánto efecto robótico lleva.
