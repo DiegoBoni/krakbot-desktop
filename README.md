@@ -36,7 +36,7 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
 
 - **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
-- **Orbe**: esfera de píxeles de colores brillantes con cara, voz de mujer elegante (`nova`).
+- **Jarvis**: núcleo abstracto de píxeles estilo Siri/Jarvis, sin cara: anillos de colores que giran y, al escuchar o hablar, un ecualizador radial; voz de mujer elegante (`nova`).
 
 Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:

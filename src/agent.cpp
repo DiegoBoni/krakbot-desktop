@@ -46,7 +46,7 @@ static const Skin SKINS[] = {
   {"KRAKEN", "echo",
    "Sos un pulpito robot varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con un tono levemente metálico y robótico, pausas cortas y entusiasmo exagerado, en español rioplatense.",
    0.4f, 6, 0xE28A},
-  {"ORBE", "nova",
+  {"JARVIS", "nova",
    "Hablá en español rioplatense con voz de mujer elegante, cálida y serena, pausada, refinada y con un toque de misterio.",
    0.0f, 0, 0xF81F},
 };
@@ -553,64 +553,86 @@ static void drawKraken(AgState s, int frame) {
 }
 
 
-// ---- skin 1: pixel orb ----------------------------------------------------------------------------
+// ---- skin 1: abstract pixel core (Jarvis / Siri style) -------------------------------------------
+// Concentric dashed rings spin around a glowing core; while listening or talking the middle ring
+// turns into a radial equalizer. No face, just light.
 
-static const uint16_t ORB_PAL[6] = {0xF81F, 0x07FF, 0xFFE0, 0x07E0, 0xFD20, 0x781F};   // magenta cyan yellow green orange violet
-static const uint16_t ORB_DIM[3] = {0x1010, 0x0811, 0x2014};
+#define OP 6          // pixel size
+#define OGX 32
+#define OGY 21
+#define OX0 24
+#define OY0 7
+static float oD[OGY][OGX], oA[OGY][OGX];
+static bool oReady = false;
+
+static uint16_t mix565(uint16_t a, uint16_t b, int t) {   // t 0..16
+  int ar = a >> 11, ag = (a >> 5) & 63, ab = a & 31, br = b >> 11, bg = (b >> 5) & 63, bb = b & 31;
+  return ((ar + (br - ar) * t / 16) << 11) | ((ag + (bg - ag) * t / 16) << 5) | (ab + (bb - ab) * t / 16);
+}
 
 static void drawOrb(AgState s, int frame) {
-  const int P = 8, GX = 24, GY = 16, X0 = 24, Y0 = 6;
-  float cx = GX / 2.0f - 0.5f, cy = GY / 2.0f - 0.5f;
-  float r = 6.2f + 0.5f * sinf(frame * 0.4f);
-  int lift = 0;
-  switch (s) {
-    case AG_SPEAKING: r = 5.4f + 1.6f * fabsf(sinf(frame * 0.9f)); break;
-    case AG_LISTENING: r = 5.0f + min((int)level, 100) / 60.0f; break;
-    case AG_SLEEP: r = 4.2f + 0.5f * sinf(frame * 0.5f); break;
-    case AG_HAPPY: r = 6.4f; lift = (frame % 2) ? -8 : 0; break;
-    default: break;
-  }
-  cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
-  for (int y = 0; y < GY; y++) {
-    for (int x = 0; x < GX; x++) {
-      float dx = x - cx, dy = (y - cy) * 1.0f, d = sqrtf(dx * dx + dy * dy);
-      if (d > r) continue;
-      uint16_t c;
-      switch (s) {
-        case AG_SLEEP: c = ORB_DIM[((x * 3 + y * 5 + frame) % 11) == 0 ? 2 : (x + y) % 2]; break;
-        case AG_ERROR: c = ((x + y + frame) % 2) ? 0xF800 : 0x4000; break;
-        case AG_LISTENING: c = (((int)(d * 1.0f) + frame) % 2) ? 0x07FF : 0xFFE0; break;
-        case AG_THINKING: case AG_TRANSCRIBING: case AG_CONNECTING: {
-          float a = atan2f(dy, dx) + 3.1416f;
-          c = ORB_PAL[((int)(a * 6.0f / 6.2832f) + frame) % 6];
-          break; }
-        case AG_SPEAKING: c = ORB_PAL[((int)(d * 1.4f) + 60 - frame) % 6]; break;
-        case AG_HAPPY: c = ORB_PAL[(x + y + frame * 2) % 6]; break;
-        default: c = ORB_PAL[((x + y) / 3 + frame / 2) % 6]; break;
+  if (!oReady) {
+    for (int y = 0; y < OGY; y++)
+      for (int x = 0; x < OGX; x++) {
+        float dx = x - 15.5f, dy = y - 10.0f;
+        oD[y][x] = sqrtf(dx * dx + dy * dy);
+        oA[y][x] = atan2f(dy, dx) + 3.14159f;
       }
-      float hx = x - (cx - 2.6f), hy = y - (cy - 2.6f);
-      if (s != AG_SLEEP && s != AG_ERROR && hx * hx + hy * hy < 2.2f) c = COL_TEXT;   // glossy highlight
-      cv->fillRect(X0 + x * P, Y0 + lift + y * P, P, P, c);
+    oReady = true;
+  }
+  const float TAU = 6.28318f;
+  bool calm = s == AG_IDLE, sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
+  bool eq = s == AG_LISTENING || s == AG_SPEAKING;
+  bool busy = s == AG_THINKING || s == AG_TRANSCRIBING || s == AG_CONNECTING;
+  float spin = busy ? 0.35f : happy ? 0.5f : sleep ? 0.02f : eq ? 0.12f : 0.07f;
+  float pulse = s == AG_SPEAKING ? 0.5f + 0.5f * fabsf(sinf(frame * 0.9f)) : 0.5f + 0.5f * sinf(frame * 0.35f);
+  float sc = 1.0f + (s == AG_SPEAKING ? 0.07f * pulse : 0.03f * pulse) + (happy ? ((frame % 2) ? 0.08f : 0) : 0);
+  if (sleep) sc = 0.55f + 0.03f * pulse;
+  float amp = s == AG_LISTENING ? 0.2f + min((int)level, 100) / 100.0f * 0.8f : s == AG_SPEAKING ? 0.45f + 0.55f * pulse : 0;
+
+  uint16_t cOuter = err ? 0xF800 : sleep ? 0x4010 : 0xF81F;
+  uint16_t cMid = err ? 0xFA00 : sleep ? 0x0210 : 0x07FF;
+  uint16_t cInner = err ? 0xF800 : sleep ? 0x1014 : 0x5A9F;
+  uint16_t cCore = err ? 0xF800 : sleep ? 0x2A9F : (s == AG_SPEAKING ? YELLOW : COL_TEXT);
+
+  cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
+  for (int y = 0; y < OGY; y++) {
+    for (int x = 0; x < OGX; x++) {
+      float d = oD[y][x] / sc, a = oA[y][x];
+      uint16_t c = 0;
+      bool on = false;
+      if (d < 1.6f + 0.5f * pulse) {   // core, brighter in the middle
+        c = d < 0.9f ? cCore : mix565(cCore, cMid, 10);
+        on = true;
+      } else if (eq && d > 3.0f && d < 3.0f + 4.6f * amp * (0.35f + 0.65f * fabsf(sinf(frame * 0.8f + (int)(a * 24 / TAU) * 1.7f)))) {
+        c = mix565(cMid, s == AG_LISTENING ? YELLOW : cOuter, (int)((d - 3.0f) * 3.5f));   // equalizer bars
+        on = ((int)(a * 24 / TAU * 2)) % 2 == 0 || d < 4.0f;   // 1-cell gaps between bars
+      } else if (!eq && fabsf(d - 3.6f) < 0.55f) {   // inner ring: 6 dashes
+        on = ((int)((a + frame * spin * 1.6f) * 6 / TAU)) % 2 == 0;
+        c = cInner;
+      } else if (fabsf(d - 5.7f) < 0.55f) {   // middle ring: 12 dashes, counter-rotating
+        on = ((int)((a - frame * spin) * 12 / TAU + 120)) % 3 != 0;
+        c = cMid;
+      } else if (fabsf(d - 8.0f) < 0.55f) {   // outer ring: 24 fine dashes with a bright sweep
+        on = ((int)((a + frame * spin * 0.6f) * 24 / TAU)) % 2 == 0;
+        c = cOuter;
+        if (busy || happy) {   // a bright comet runs around the outer ring
+          float sweep = fmodf(frame * 0.45f, TAU) , diff = fmodf(a - sweep + TAU * 2, TAU);
+          if (diff < 1.1f) { on = true; c = mix565(COL_TEXT, cOuter, (int)(diff * 14)); }
+        }
+      } else if (fabsf(d - 9.4f) < 0.5f && !sleep) {   // HUD ticks at the four cardinal points
+        float q = fmodf(a, TAU / 4);
+        on = q < 0.12f || q > TAU / 4 - 0.12f;
+        c = COL_DIM + 0x2104;
+      }
+      if (on) cv->fillRect(OX0 + x * OP, OY0 + y * OP, OP, OP, c);
     }
   }
-  // face: two eyes and a mouth cut out of the orb
-  int ex = X0 + (int)(cx * P), ey = Y0 + lift + (int)((cy - 0.5f) * P);
-  bool shut = s == AG_SLEEP || s == AG_HAPPY || (s == AG_IDLE && frame % 12 == 11);
-  for (int e = -1; e <= 1; e += 2) {
-    int x = ex + e * 3 * P - (e < 0 ? 0 : 0);
-    if (shut) cv->fillRect(x, ey + P, P * 2, P / 2, 0x0000);
-    else cv->fillRect(x, ey, P * 2, P * 2, 0x0000);
-    if (!shut) cv->fillRect(x + P, ey, P / 2 + 1, P / 2 + 1, COL_TEXT);
-  }
-  int mw = (s == AG_SPEAKING) ? (1 + (frame % 3)) : 1;
-  cv->fillRect(ex + P - mw * P / 2, ey + 4 * P, (mw + 1) * P, (s == AG_SPEAKING ? 2 : 1) * P / 2 + (s == AG_SPEAKING ? P / 2 : 0), 0x0000);
-
-  // pixels orbiting the orb
-  if (s != AG_SLEEP) {
-    for (int i = 0; i < 4; i++) {
-      float a = frame * (s == AG_SPEAKING ? 0.5f : 0.25f) + i * 1.5708f;
-      int px = X0 + (int)((cx + (r + 1.8f) * cosf(a)) * P), py = Y0 + lift + (int)((cy + (r + 1.8f) * 0.8f * sinf(a)) * P);
-      cv->fillRect(px, py, P, P, ORB_PAL[(i + frame) % 6]);
+  if (happy) {   // sparkles
+    for (int i = 0; i < 6; i++) {
+      float ang = i * 1.047f + frame * 0.6f;
+      int px = OX0 + (int)((15.5f + 10.5f * cosf(ang)) * OP), py = OY0 + (int)((10.0f + 9.0f * sinf(ang)) * OP);
+      cv->fillRect(px, py, OP, OP, (i % 2) ? YELLOW : 0x07E0);
     }
   }
   if (s == AG_LISTENING) {
