@@ -36,7 +36,7 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
 
 - **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
-- **Solarpunk**: paisaje de píxeles con un sol bajo, colinas de ondas verdes y doradas, flores que florecen y polen flotando; las colinas se agitan con tu voz y con la respuesta. Voz de mujer elegante (`nova`).
+- **Aura**: anillo hueco tejido con decenas de hilos finos de píxeles que se desfasan (cian → azul → violeta sobre negro). Se agita con tu voz al escuchar y ondula al hablar. Voz de mujer elegante (`nova`).
 
 Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:

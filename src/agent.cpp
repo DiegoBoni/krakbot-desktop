@@ -46,7 +46,7 @@ static const Skin SKINS[] = {
   {"KRAKEN", "echo",
    "Sos un pulpito robot varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con un tono levemente metálico y robótico, pausas cortas y entusiasmo exagerado, en español rioplatense.",
    0.4f, 6, 0xE28A},
-  {"SOLARPUNK", "nova",
+  {"AURA", "nova",
    "Hablá en español rioplatense con voz de mujer elegante, cálida y serena, pausada, refinada y con un toque de misterio.",
    0.0f, 0, 0xF81F},
 };
@@ -553,23 +553,19 @@ static void drawKraken(AgState s, int frame) {
 }
 
 
-// ---- skin 1: solarpunk landscape -------------------------------------------------------------------
-// A low sun behind layered hills of pixel waves, with blooming flowers and drifting pollen.
-// The hills swell with your voice while listening and with the reply while talking.
+// ---- skin 1: aura ----------------------------------------------------------------------------------
+// A hollow ring woven from many thin strands that drift out of phase, like a voice made visible.
+// Cyan -> blue -> violet on black, drawn on a 2 px pixel grid. It swells with your voice while
+// listening and ripples while talking.
 
-#define OP 6          // pixel size
-#define OGX 40
-#define OGY 23
+#define OP 2
 #define RGB(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
+#define STRANDS 11
+#define STEPS 300
 
 static uint16_t dim565(uint16_t c, int pct) {
   int r = (c >> 11) * pct / 100, g = ((c >> 5) & 63) * pct / 100, b = (c & 31) * pct / 100;
   return (r << 11) | (g << 5) | b;
-}
-
-static void cell(int x, int y, uint16_t c) {
-  if (x < 0 || x >= OGX || y < 0 || y >= OGY) return;
-  cv->fillRect(x * OP, y * OP, OP, OP, c);
 }
 
 static void drawOrb(AgState s, int frame) {
@@ -577,98 +573,51 @@ static void drawOrb(AgState s, int frame) {
   bool sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
   bool eq = s == AG_LISTENING || s == AG_SPEAKING;
   bool busy = s == AG_THINKING || s == AG_TRANSCRIBING || s == AG_CONNECTING;
-  float spin = busy ? 0.30f : happy ? 0.40f : sleep ? 0.03f : eq ? 0.20f : 0.10f;
+
+  static const uint16_t PAL[6] = {RGB(60, 235, 255), RGB(0, 160, 255), RGB(50, 100, 255), RGB(110, 80, 255), RGB(175, 85, 255), RGB(40, 200, 255)};
+  static const uint16_t PAL_ERR[6] = {RGB(255, 70, 50), RGB(255, 130, 40), RGB(255, 190, 60), RGB(255, 90, 60), RGB(220, 40, 60), RGB(255, 160, 50)};
+  static const float AMPL[5] = {10.0f, 8.0f, 5.5f, 3.5f, 2.5f};     // harmonics k = 2..6
+  static const float SPEED[5] = {0.9f, -1.3f, 1.7f, -2.1f, 2.6f};
+  static const float PHASE[5] = {0.0f, 1.7f, 3.1f, 4.4f, 5.6f};
+
+  float t = frame * (busy ? 0.35f : happy ? 0.5f : sleep ? 0.03f : eq ? 0.22f : 0.10f);
   float pulse = s == AG_SPEAKING ? 0.5f + 0.5f * fabsf(sinf(frame * 0.9f)) : 0.5f + 0.5f * sinf(frame * 0.35f);
   float amp = s == AG_LISTENING ? 0.15f + min((int)level, 100) / 100.0f * 0.85f : s == AG_SPEAKING ? 0.4f + 0.6f * pulse : 0;
-  int pct = sleep ? 35 : 100;
-
-  static const uint16_t BODY[4] = {RGB(20, 90, 110), RGB(20, 125, 95), RGB(60, 165, 50), RGB(120, 195, 40)};
-  static const uint16_t EDGE[4] = {RGB(70, 175, 185), RGB(90, 205, 145), RGB(165, 235, 75), RGB(245, 225, 75)};
-  static const uint16_t WILT_BODY[4] = {RGB(90, 25, 25), RGB(120, 40, 25), RGB(150, 70, 25), RGB(170, 90, 30)};
-  static const uint16_t WILT_EDGE[4] = {RGB(200, 60, 50), RGB(230, 90, 50), RGB(240, 140, 50), RGB(250, 190, 70)};
-  static const float BASE[4] = {13.5f, 15.0f, 16.8f, 18.8f};
-  static const float AMPL[4] = {1.3f, 1.7f, 2.0f, 2.2f};
-  static const float FREQ[4] = {0.30f, 0.38f, 0.26f, 0.45f};
-  static const float SPD[4] = {1.0f, -1.3f, 1.7f, -2.1f};
+  float R = 38.0f + (s == AG_SPEAKING ? 5.0f * pulse : 2.0f * pulse) + amp * 6.0f + (happy ? ((frame % 2) ? 5.0f : 0) : 0);
+  float wob = sleep ? 0.12f : busy ? 0.8f : eq ? 0.8f + amp * 0.9f : happy ? 1.2f : 0.8f;
+  float fan = sleep ? 0.2f : busy ? 0.6f : 1.0f;      // how far the strands drift apart
+  if (sleep) R = 15.0f + pulse;
+  float rot = t * (busy ? 0.35f : 0.06f);
+  const float cx = 120, cy = 66;
 
   cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
+  for (int i = 0; i < 10; i++)   // sparse dust
+    if ((frame + i * 5) % 9 < 6) cv->fillRect(((i * 53 + 17) % 120) * OP, ((i * 29 + 5) % 66) * OP, OP, OP, dim565(PAL[i % 3], 45));
 
-  // sky: twinkling stars at night, a faint dithered glow by day
-  if (sleep) {
-    for (int i = 0; i < 9; i++)
-      if ((frame + i * 3) % 7 < 5) cell((i * 17 + 3) % OGX, (i * 5) % 9, RGB(170, 190, 220));
-  }
-
-  // sun (or moon), half hidden by the hills
-  float sx = 20, sy = 12.5f, R = 5.2f + (s == AG_SPEAKING ? 1.3f * pulse : 0.5f * pulse) + (s == AG_LISTENING ? amp * 1.5f : 0) + (happy ? 1.5f : 0);
-  if (sleep) R = 3.6f;
-  for (int y = 0; y < OGY; y++)
-    for (int x = 0; x < OGX; x++) {
-      float dx = x - sx, dy = y - sy, d = sqrtf(dx * dx + dy * dy);
-      uint16_t c = 0;
-      if (d <= R) c = sleep ? RGB(150, 160, 190) : err ? RGB(230, 90, 40) : (d < R * 0.55f ? RGB(255, 245, 140) : (d < R * 0.8f ? RGB(255, 205, 60) : RGB(250, 150, 40)));
-      else if (d <= R + 1.6f && !sleep && ((x + y) % 2 == 0)) c = err ? RGB(110, 40, 30) : RGB(120, 90, 30);   // dithered halo
-      if (c) cell(x, y, c);
-    }
-  if (!sleep) {   // stepped rays
-    int n = 14;
-    for (int i = 0; i < n; i++) {
-      float ang = -3.14159f + (i + 0.5f) * 3.14159f / n + (frame % 2 ? 0.04f : 0);
-      if (!happy && !busy && (i + frame / 2) % 2) continue;   // rays shimmer on and off
-      for (int k = 0; k < 2; k++) {
-        float rr = R + 2.4f + k * 1.6f;
-        cell((int)(sx + rr * cosf(ang) + 0.5f), (int)(sy + rr * sinf(ang) + 0.5f), err ? RGB(200, 90, 40) : RGB(255, 215, 80));
-      }
+  for (int i = 0; i < STRANDS; i++) {
+    float u = i / (STRANDS - 1.0f);
+    int bright = sleep ? 38 : (int)(45 + 55 * sinf(3.14159f * u));   // outer strands fade
+    for (int j = 0; j < STEPS; j++) {
+      float th = j * TAU / STEPS;
+      float r = R + (u - 0.5f) * 8.0f * fan;
+      for (int k = 0; k < 5; k++) r += AMPL[k] * wob * sinf((k + 2) * th + t * SPEED[k] + u * fan * (0.9f + 0.3f * k) + PHASE[k]);
+      if (s == AG_SPEAKING) r += 2.5f * pulse * sinf(9 * th + frame * 1.3f + u * 3);
+      r = constrain(r, 3.0f, 61.0f);
+      int x = (int)(cx + r * cosf(th + rot)) / OP * OP, y = (int)(cy + r * 0.98f * sinf(th + rot)) / OP * OP;
+      float ph = u * 0.7f + th / TAU * 0.6f + t * (busy ? 0.25f : 0.08f);
+      uint16_t c = (err ? PAL_ERR : PAL)[(int)((ph - floorf(ph)) * 6)];
+      cv->fillRect(x, y, OP, OP, dim565(c, bright));
     }
   }
-
-  // hills, back to front
-  int topAt[4][OGX];
-  for (int k = 0; k < 4; k++) {
-    float a = AMPL[k] + amp * (1.0f + k * 0.45f) * 2.2f;
-    uint16_t body = dim565(err ? WILT_BODY[k] : BODY[k], pct), edge = dim565(err ? WILT_EDGE[k] : EDGE[k], pct);
-    for (int x = 0; x < OGX; x++) {
-      float y = BASE[k] + a * sinf(x * FREQ[k] + frame * spin * SPD[k]);
-      if (eq) y -= amp * 1.2f * (1 - k * 0.2f) * fabsf(sinf(x * 0.7f + frame * 0.5f + k));
-      int yt = (int)(y + 0.5f);
-      topAt[k][x] = yt;
-      if (yt < OGY) cv->fillRect(x * OP, yt * OP, OP, (OGY - yt) * OP, body);
-      cell(x, yt, edge);
-    }
-  }
-
-  // flowers on the front hill: a bud while asleep, a bloom otherwise
-  static const int FX[5] = {4, 11, 20, 29, 36};
-  static const uint16_t PET[5] = {RGB(255, 90, 200), RGB(80, 220, 255), RGB(255, 140, 60), RGB(255, 90, 200), RGB(120, 240, 130)};
-  for (int i = 0; i < 5; i++) {
-    int x = FX[i], y0 = topAt[3][x];
-    int sway = (int)lroundf(sinf(frame * spin * 1.5f + i) * (happy ? 1.4f : 0.7f));
-    int h = 3 + (i % 2);
-    uint16_t stem = dim565(err ? RGB(130, 90, 40) : RGB(70, 190, 70), pct);
-    for (int k = 1; k <= h; k++) cell(x + (k > h - 1 ? sway : 0), y0 - k, stem);
-    int hx = x + sway, hy = y0 - h - 1;
-    uint16_t pet = dim565(err ? RGB(120, 80, 40) : PET[i], pct);
-    if (sleep || err) cell(hx, hy, pet);
-    else {
-      cell(hx, hy, RGB(255, 235, 90));
-      cell(hx - 1, hy, pet); cell(hx + 1, hy, pet); cell(hx, hy - 1, pet);
-      if (happy || (frame + i) % 6 < 3) cell(hx, hy + 1, pet);
-    }
-    if (i % 2 == 0) cell(x - 1, y0 - 2, stem);   // a leaf
-  }
-
-  // pollen drifting upwards
-  if (!sleep) {
-    int motes = (eq || happy) ? 10 : 6;
-    for (int i = 0; i < motes; i++) {
-      int px = (i * 13 + frame * (1 + i % 2) + (int)(sinf(frame * 0.3f + i) * 2)) % OGX;
-      int py = 21 - ((frame * (1 + i % 3) + i * 7) % 19);
-      cell(px, py, (i % 3 == 0) ? RGB(255, 245, 160) : (i % 3 == 1) ? RGB(160, 255, 150) : RGB(150, 240, 255));
+  if (happy) {   // sparkles around the ring
+    for (int i = 0; i < 8; i++) {
+      float ang = i * 0.785f + frame * 0.6f;
+      cv->fillRect((int)(cx + (R + 16) * cosf(ang)) / OP * OP, (int)(cy + (R + 12) * sinf(ang)) / OP * OP, OP * 2, OP * 2, (i % 2) ? COL_TEXT : PAL[4]);
     }
   }
   if (s == AG_LISTENING) {
     cv->drawFastHLine(KX, CANVAS_H - 3, 192, COL_DIM);
-    cv->fillRect(KX, CANVAS_H - 5, 192 * min((int)level, 100) / 100, 4, YELLOW);
+    cv->fillRect(KX, CANVAS_H - 5, 192 * min((int)level, 100) / 100, 4, PAL[0]);
   }
 }
 
