@@ -122,6 +122,7 @@ void loop() {
   int tx, ty;
   if (touchPressed(tx, ty)) {
     if (Serial) Serial.printf("touch x=%d y=%d\n", tx, ty);
+    if (current == POSE_RIGHT) agentTouch();
     if (current == POSE_UP) pomodoroTouch(tx, ty);   // ignored while flat/asleep
   }
   BtnEvent plus = buttonsPoll(BTN_PLUS), boot = buttonsPoll(BTN_BOOT), pwr = buttonsPoll(BTN_PWR);
@@ -137,7 +138,7 @@ void loop() {
     if (held && !talking) agentPress();
     if (!held && talking) agentRelease();
     talking = held;
-    if (boot == EV_CLICK) agentCancel();
+    if (boot == EV_CLICK) agentBoot();
   }
   if (current == POSE_LEFT) {
     if (boot == EV_CLICK) { backlightCycle(); soundPlay(SND_CLICK); }

@@ -6,4 +6,5 @@ void agentLeave();                 // pose left: abort whatever is running, radi
 void agentTick(bool visible);      // animation + status; call every loop
 void agentPress();                 // PLUS pushed down
 void agentRelease();               // PLUS let go
-void agentCancel();                // BOOT: stop talking / drop the current turn
+void agentBoot();                  // BOOT: history browser when idle, cancels the turn when busy
+void agentTouch();                 // screen tap: wakes Krakbot and makes it react; leaves the history

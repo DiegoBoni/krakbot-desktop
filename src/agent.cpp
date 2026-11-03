@@ -35,12 +35,15 @@
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern const uint8_t rootca_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
 
-enum AgState { AG_IDLE, AG_CONNECTING, AG_LISTENING, AG_TRANSCRIBING, AG_THINKING, AG_SPEAKING, AG_ERROR, AG_SLEEP };
+enum AgState { AG_IDLE, AG_CONNECTING, AG_LISTENING, AG_TRANSCRIBING, AG_THINKING, AG_SPEAKING, AG_ERROR, AG_SLEEP, AG_HAPPY };
 
 static volatile AgState state = AG_IDLE;
 static volatile bool active = false, held = false, abortReq = false;
 static volatile int level = 0;
-static volatile uint32_t lastActivity = 0, speakStart = 0;
+static volatile uint32_t lastActivity = 0, speakStart = 0, pokeUntil = 0;
+static bool histMode = false;
+static uint32_t histVerSeen = ~0u;
+static int histIdx = 0;
 static TaskHandle_t task;
 static bool radioOn = false;
 static uint32_t lastUse = 0;
@@ -94,6 +97,24 @@ static void showText(const char *s, uint16_t col) {
   strlcpy(shown, tmp, sizeof(shown));
   shownCol = col;
   shownVer = shownVer + 1;
+  portEXIT_CRITICAL(&mux);
+}
+
+struct Turn { char q[116]; char a[272]; };
+#define HIST_N 8
+static Turn hist[HIST_N];
+static int histCount = 0, histHead = 0;   // head = next slot to write
+static volatile uint32_t histVer = 0;
+
+static void pushHistory(const String &q, const String &a) {
+  Turn t;
+  foldAscii(q.c_str(), t.q, sizeof(t.q));
+  foldAscii(a.c_str(), t.a, sizeof(t.a));
+  portENTER_CRITICAL(&mux);
+  hist[histHead] = t;
+  histHead = (histHead + 1) % HIST_N;
+  histCount = min(histCount + 1, HIST_N);
+  histVer = histVer + 1;
   portEXIT_CRITICAL(&mux);
 }
 
@@ -369,6 +390,7 @@ static void runTurn() {
   if (abortReq) { setState(AG_IDLE); return; }
   if (a.isEmpty()) { fail("SIN RESPUESTA"); return; }
 
+  pushHistory(q, a);
   showText(a.c_str(), COL_TEXT);
   setState(AG_SPEAKING);
   bool ok = speak(a);
@@ -415,6 +437,7 @@ static uint32_t frameMs(AgState s) {
     case AG_SPEAKING: return 130;
     case AG_LISTENING: return 240;
     case AG_SLEEP: return 900;
+    case AG_HAPPY: return 110;
     case AG_ERROR: return 120;
     default: return 500;
   }
@@ -423,6 +446,7 @@ static uint32_t frameMs(AgState s) {
 static void drawKraken(AgState s, int frame) {
   int sway = 0, bob = 0;
   switch (s) {
+    case AG_HAPPY: sway = sinf(frame * 1.2f) * 10; bob = (frame % 2) ? -10 : 0; break;
     case AG_IDLE: sway = sinf(frame * 0.18f) * 14; bob = sinf(frame * 0.36f) * 3; break;
     case AG_LISTENING: sway = sinf(frame * 0.45f) * 9; bob = cosf(frame * 0.45f) * 5; break;
     case AG_SPEAKING: sway = sinf(frame * 0.6f) * 7; bob = (frame % 2) ? 3 : -3; break;
@@ -432,7 +456,7 @@ static void drawKraken(AgState s, int frame) {
   offX = sway;
   offY = bob + ((frame % 4 == 0) ? PIX / 4 : 0);
   bool sleeping = s == AG_SLEEP;
-  bool blinking = sleeping || (s == AG_IDLE && frame % 7 == 6);
+  bool blinking = sleeping || s == AG_HAPPY || (s == AG_IDLE && frame % 7 == 6);
 
   cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
   blk(3, 2, 6, 4, CORAL);
@@ -447,7 +471,7 @@ static void drawKraken(AgState s, int frame) {
       blk(gx + 1, 3 + ((frame / 2) % 2), 1, 1, 0x0000);
     }
   }
-  if (s == AG_SPEAKING && frame % 2 == 0) blk(5, 5, 2, 2, COL_TEXT);
+  if ((s == AG_SPEAKING || s == AG_HAPPY) && frame % 2 == 0) blk(5, 5, 2, 2, COL_TEXT);
   else blk(5, 5, 2, 1, COL_TEXT);
 
   int t = frame % 2;
@@ -473,6 +497,13 @@ static void drawKraken(AgState s, int frame) {
     int z = (frame / 1) % 2;
     blk(10, 1 - z, 1, 1, 0x7BEF);
     blk(11, 0, 1, 1, 0x7BEF);
+  }
+  if (s == AG_HAPPY) {   // sparkles
+    int w = frame % 2;
+    blk(1 + w, 1, 1, 1, YELLOW);
+    blk(10 - w, 1, 1, 1, YELLOW);
+    blk(0 + w, 4, 1, 1, 0xFD20);
+    blk(11 - w, 4, 1, 1, 0xFD20);
   }
   if (s == AG_ERROR) {
     blk(10, 0, 1, 2, 0xF800);
@@ -503,19 +534,21 @@ static const char *labelFor(AgState s, uint16_t &col) {
     case AG_SPEAKING: col = CORAL; return "HABLANDO";
     case AG_ERROR: col = 0xF800; return "ERROR";
     case AG_SLEEP: col = COL_DIM; return "ZZZ";
+    case AG_HAPPY: col = YELLOW; return "HOLA!";
     default: col = 0x07E0; return "LISTO";
   }
 }
 
+static bool needRepaint = true;
 #define LINE_CH 28
 #define LINES_PER_PAGE 6
 static char lines[24][LINE_CH + 1];
 static int nLines;
 
-static void wrapText(const char *t) {
-  nLines = 0;
+static int wrapInto(char (*lines)[LINE_CH + 1], int maxLines, const char *t) {
+  int nLines = 0;
   const char *p = t;
-  while (*p && nLines < 24) {
+  while (*p && nLines < maxLines) {
     while (*p == ' ') p++;
     int len = strlen(p);
     int take = min(len, LINE_CH);
@@ -529,9 +562,52 @@ static void wrapText(const char *t) {
     nLines++;
     p += take;
   }
+  return nLines;
 }
 
-static bool needRepaint = true;
+static void wrapText(const char *t) { nLines = wrapInto(lines, 24, t); }
+
+static void drawHistory() {
+  Turn t;
+  int total, n;
+  portENTER_CRITICAL(&mux);
+  total = histCount;
+  n = (histHead - 1 - histIdx + 2 * HIST_N) % HIST_N;
+  t = hist[n];
+  portEXIT_CRITICAL(&mux);
+  gfx->fillScreen(COL_BG);
+  gfx->setFont(u8g2_font_pressstart2p_8r);
+  gfx->setTextSize(1);
+  char head[24];
+  snprintf(head, sizeof(head), "HISTORIAL %d/%d", histIdx + 1, total);
+  gfx->setTextColor(CORAL);
+  gfx->setCursor(8, 16);
+  gfx->print(head);
+  gfx->drawFastHLine(0, 22, 240, COL_DIM);
+  static char ql[6][LINE_CH + 1], al[12][LINE_CH + 1];
+  int nq = wrapInto(ql, 5, t.q), na = wrapInto(al, 10, t.a);
+  int y = 38;
+  gfx->setTextColor(YELLOW);
+  gfx->setCursor(8, y); gfx->print("TU:"); y += 11;
+  gfx->setTextColor(0xBDF7);
+  for (int i = 0; i < nq; i++, y += 11) { gfx->setCursor(8, y); gfx->print(ql[i]); }
+  y += 6;
+  gfx->setTextColor(CORAL);
+  gfx->setCursor(8, y); gfx->print("KRAKBOT:"); y += 11;
+  gfx->setTextColor(COL_TEXT);
+  for (int i = 0; i < na; i++, y += 11) { gfx->setCursor(8, y); gfx->print(al[i]); }
+  gfx->drawFastHLine(0, 220, 240, COL_DIM);
+  gfx->setTextColor(COL_DIM);
+  gfx->setCursor(8, 234);
+  gfx->print("BOOT:ANTERIOR  +:VOLVER");
+}
+
+static void exitHistory() {
+  histMode = false;
+  gfx->fillScreen(COL_BG);
+  needRepaint = true;
+}
+
 
 void agentEnter() {
   if (!cv) {
@@ -541,6 +617,7 @@ void agentEnter() {
   held = false;
   abortReq = false;
   active = true;
+  histMode = false;
   needRepaint = true;
   lastActivity = millis();
   bool keys = strlen(GROQ_API_KEY) && strlen(OPENAI_API_KEY) && strlen(N8N_WEBHOOK_URL);
@@ -559,6 +636,7 @@ void agentLeave() {
 void agentPress() {
   lastActivity = millis();
   if (!active) return;
+  if (histMode) exitHistory();
   if (state == AG_SPEAKING) { abortReq = true; return; }
   if (state != AG_IDLE && state != AG_ERROR && state != AG_SLEEP) return;
   if (!strlen(GROQ_API_KEY) || !strlen(OPENAI_API_KEY) || !strlen(N8N_WEBHOOK_URL)) return;
@@ -570,8 +648,28 @@ void agentPress() {
 
 void agentRelease() { held = false; }
 
-void agentCancel() {
-  if (state != AG_IDLE) abortReq = true;
+void agentBoot() {
+  if (!active) return;
+  lastActivity = millis();
+  if (histMode) {
+    if (++histIdx >= histCount) exitHistory(); else histVerSeen = ~0u;
+    return;
+  }
+  if (state == AG_IDLE || state == AG_ERROR) {
+    if (histCount == 0) { pokeUntil = millis() + 900; return; }
+    histMode = true;
+    histIdx = 0;
+    histVerSeen = ~0u;
+    return;
+  }
+  abortReq = true;   // busy: drop the current turn
+}
+
+void agentTouch() {
+  if (!active) return;
+  lastActivity = millis();
+  if (histMode) { exitHistory(); return; }
+  if (state == AG_IDLE || state == AG_ERROR) pokeUntil = millis() + 1400;
 }
 
 void agentInit() {
@@ -581,8 +679,13 @@ void agentInit() {
 void agentTick(bool visible) {
   if (!visible || !active || !cv) return;
   uint32_t now = millis();
+  if (histMode) {
+    if (histVerSeen != 0u + (uint32_t)histIdx + 1000u * (uint32_t)histVer) { histVerSeen = (uint32_t)histIdx + 1000u * (uint32_t)histVer; drawHistory(); }
+    return;
+  }
   AgState s = state;
   if (s == AG_IDLE && now - lastActivity > SLEEP_AFTER_MS) s = AG_SLEEP;
+  if ((s == AG_IDLE || s == AG_SLEEP) && now < pokeUntil) s = AG_HAPPY;
 
   static AgState cSt = AG_ERROR;
   static int cFrame = -1, cLevel = -1;
