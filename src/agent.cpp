@@ -26,7 +26,7 @@
 #define STT_MODEL "whisper-large-v3-turbo"
 #define TTS_URL "https://api.openai.com/v1/audio/speech"
 #define TTS_MODEL "gpt-4o-mini-tts"
-#define TTS_GAIN 0.8f
+#define TTS_GAIN 0.4f      // the speaker amplifier distorts near full scale
 #define ROBOT_HZ 80.0f
 
 #define RATE 16000
@@ -266,40 +266,36 @@ static String spokenText(const String &t) {
   return o;
 }
 
-struct Resampler {   // 24 kHz -> 16 kHz, linear interpolation, state kept across chunks
-  float t = 0;
-  long n = 0;
-  int16_t prev = 0;
-  int16_t out[512];
-  int fill = 0;
-  uint32_t outCount = 0;
-  float mix = 0;
-  int crush = 0;
-  void flush() {
-    if (fill) streamWrite(out, fill);
-    fill = 0;
+// Collects the HTTP body (HTTPClient already strips any chunked framing) into PSRAM.
+struct PcmSink : public Stream {
+  uint8_t *buf;
+  size_t cap, len = 0;
+  PcmSink(uint8_t *b, size_t c) : buf(b), cap(c) {}
+  size_t write(const uint8_t *d, size_t n) override {
+    size_t c = min(n, cap - len);
+    memcpy(buf + len, d, c);
+    len += c;
+    return n;
   }
-  void push(int16_t x) {
-    while (t < n) {
-      float v = prev + (x - prev) * (t - (n - 1));
-      if (mix > 0) v *= (1.0f - mix) + mix * sinf(6.2831853f * ROBOT_HZ * (float)(outCount++) / RATE);
-      v = ((int)v >> crush << crush) * TTS_GAIN;
-      out[fill++] = (int16_t)constrain((int)v, -32768, 32767);
-      if (fill == 512) flush();
-      t += 1.5f;
-    }
-    prev = x;
-    n++;
-  }
+  size_t write(uint8_t b) override { return write(&b, 1); }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
 };
 
+// The whole reply is downloaded first and played afterwards: no network jitter in the audio
+// (gaps sounded like crackle) and the Wi-Fi radio is quiet while the amplifier is running.
 static bool speak(const String &text) {
   String say = spokenText(text);
   if (say.isEmpty()) return true;
+  const size_t CAP = 24000UL * 2 * 40;   // up to 40 s of 24 kHz mono
+  static uint8_t *pcm;
+  if (!pcm) pcm = (uint8_t *)ps_malloc(CAP);
+  if (!pcm) return false;
+
   WiFiClientSecure client;
   tlsSetup(client);
   HTTPClient http;
-  http.useHTTP10(true);   // no chunked framing, the PCM comes straight off the socket
   http.setTimeout(20000);
   if (!http.begin(client, TTS_URL)) return false;
   http.addHeader("Authorization", String("Bearer ") + OPENAI_API_KEY);
@@ -310,7 +306,7 @@ static bool speak(const String &text) {
   const Skin &sk = SKINS[skinIdx];
   doc["voice"] = sk.voice;
   doc["instructions"] = sk.style;
-  doc["response_format"] = "pcm";   // 24 kHz, 16-bit, mono
+  doc["response_format"] = "pcm";   // 24 kHz, 16-bit, little-endian, mono
   String body;
   serializeJson(doc, body);
   int code = http.POST(body);
@@ -319,43 +315,33 @@ static bool speak(const String &text) {
     http.end();
     return false;
   }
-  auto *s = http.getStreamPtr();
-  static Resampler rs;
-  rs = Resampler();
-  rs.mix = sk.robotMix;
-  rs.crush = sk.crush;
-  streamBegin();
-  uint8_t buf[2048];
-  uint8_t odd = 0;
-  bool haveOdd = false, started = false;
-  size_t pre = 0;
-  uint8_t *prebuf = (uint8_t *)ps_malloc(24000);   // half a second of head start against Wi-Fi jitter
-  uint32_t lastData = millis();
-  auto feed = [&](const uint8_t *d, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-      if (!haveOdd) { odd = d[i]; haveOdd = true; }
-      else { rs.push((int16_t)(odd | (d[i] << 8))); haveOdd = false; }
-    }
-  };
-  while (!abortReq && (http.connected() || s->available()) && millis() - lastData < 8000) {
-    int avail = s->available();
-    if (avail <= 0) { delay(2); continue; }
-    int got = s->readBytes(buf, min(avail, (int)sizeof(buf)));
-    if (got <= 0) continue;
-    lastData = millis();
-    if (!started && prebuf && pre + got <= 24000) {
-      memcpy(prebuf + pre, buf, got);
-      pre += got;
-      if (pre < 24000 - sizeof(buf)) continue;
-    }
-    if (!started) { started = true; if (pre) { feed(prebuf, pre); pre = 0; } }
-    if (!abortReq) feed(buf, got);
-  }
-  if (!started && !abortReq && pre) feed(prebuf, pre);   // short reply: never reached the head start
-  if (!abortReq) rs.flush();
-  streamEnd();
-  free(prebuf);
+  PcmSink sink(pcm, CAP);
+  http.writeToStream(&sink);
   http.end();
+  size_t n = sink.len / 2;
+  if (Serial) Serial.printf("tts %u samples\n", (unsigned)n);
+  if (abortReq || n < 480) return !abortReq ? false : true;
+
+  setState(AG_SPEAKING);
+  const int16_t *in = (const int16_t *)pcm;
+  const uint32_t total = (uint32_t)((n - 1) * 2 / 3);   // 24 kHz -> 16 kHz
+  const int FADE = 240;
+  int16_t out[512];
+  int fill = 0;
+  streamBegin();
+  for (uint32_t k = 0; k < total && !abortReq; k++) {
+    uint32_t pos2 = 3 * k, i = pos2 >> 1;   // exact integer phase, no float drift
+    float v = in[i] + (in[i + 1] - in[i]) * ((pos2 & 1) ? 0.5f : 0.0f);
+    if (sk.robotMix > 0) v *= (1.0f - sk.robotMix) + sk.robotMix * sinf(6.2831853f * ROBOT_HZ * (float)(k % RATE) / RATE);
+    int q = ((int)v >> sk.crush) << sk.crush;
+    float g = TTS_GAIN;
+    if (k < FADE) g *= (float)k / FADE;                     // fade in/out so the amplifier never pops
+    else if (total - k < FADE) g *= (float)(total - k) / FADE;
+    out[fill++] = (int16_t)constrain((int)(q * g), -32768, 32767);
+    if (fill == 512) { streamWrite(out, fill); fill = 0; }
+  }
+  if (fill && !abortReq) streamWrite(out, fill);
+  streamEnd();
   return true;
 }
 
@@ -427,7 +413,6 @@ static void runTurn() {
 
   pushHistory(q, a);
   showText(a.c_str(), COL_TEXT);
-  setState(AG_SPEAKING);
   bool ok = speak(a);
   lastUse = millis();
   if (!ok && !abortReq) { setState(AG_IDLE); if (Serial) Serial.println("agent: tts failed"); return; }
