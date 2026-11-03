@@ -62,13 +62,11 @@ def clone(f):
 # --- eyes ---------------------------------------------------------------------------------------
 wink = clone(base)                                   # right eye drawn as a wink, left eye open
 
-open_ = clone(base)                                  # right eye opened to match the left one
-rect(open_, 27, 22, 35, 25, SKIN)                    # erase the wink stroke
-put(open_, [(x, 22) for x in range(28, 35)], DARK)   # lid
-rect(open_, 29, 23, 33, 25, WHITE)
-rect(open_, 30, 23, 32, 25, IRIS)
-rect(open_, 31, 24, 31, 25, DARK)
-put(open_, [(30, 23)], WHITE)
+open_ = clone(base)                                  # right eye = mirror image of the left one
+rect(open_, 27, 22, 35, 28, SKIN)                    # erase the wink stroke
+for y in range(22, 29):
+    for x in range(11, 18):
+        open_[y][45 - x] = base[y][x]                # mirror about the face centre line (x = 22.5)
 
 closed = clone(wink)                                 # left eye shut with the same kind of stroke
 rect(closed, 10, 23, 17, 28, SKIN)
