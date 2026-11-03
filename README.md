@@ -1,14 +1,52 @@
-# krakbot Desktop
+<h1 align="center">krakbot Desktop</h1>
 
-Firmware para la **Waveshare ESP32-S3-Touch-LCD-1.54**: un gadget de escritorio a batería con
-tres "apps" que cambian según cómo lo apoyás o lo girás (acelerómetro QMI8658). Estética 8-bit.
+<p align="center">
+  <img src="assets/screens/hero.png" alt="Las cuatro pantallas de krakbot Desktop" width="100%">
+</p>
+
+<p align="center">
+  Un gadget de escritorio a batería con estética 8-bit: <b>girás la placa y cambia de app</b>.<br>
+  Hecho para la <b>Waveshare ESP32-S3-Touch-LCD-1.54</b> (acelerómetro QMI8658, micrófono y parlante).
+</p>
+
+> Las capturas de este README son maquetas dibujadas con las mismas medidas que el firmware, no fotos de la placa.
+
+## Cómo funciona
+
+El acelerómetro detecta cómo está la placa y elige la app:
 
 | Posición | App |
 |---|---|
 | Vertical (botones arriba) | **Pomodoro**: foco / descanso / pausa larga, táctil + botones + sonidos |
 | Giro 90° a la izquierda | **Reloj**: hora (NTP), clima exterior (Open-Meteo, Rosario), batería, campanita por hora |
-| Giro 90° a la derecha | Agente de voz: Krakbot, el pulpo pixelado |
+| Giro 90° a la derecha | **Agente de voz**: hablás y un personaje te contesta (Kraken o Frida) |
 | Acostada, pantalla arriba | Pantalla apagada (ahorro de batería) |
+
+## Las apps
+
+<table>
+  <tr>
+    <td align="center"><img src="assets/screens/pomodoro.png" width="260"><br><b>Pomodoro</b><br>25 / 5 / 15 min, 4 bloques por set</td>
+    <td align="center"><img src="assets/screens/reloj.png" width="260"><br><b>Reloj + clima</b><br>hora, fecha, temperatura y humedad exterior</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screens/kraken_habla.png" width="260"><br><b>Kraken</b><br>pulpo pixelado, voz de nene robótico</td>
+    <td align="center"><img src="assets/screens/frida_habla.png" width="260"><br><b>Frida</b><br>pícara y coqueta, voz joven</td>
+  </tr>
+</table>
+
+## Los personajes
+
+<p align="center">
+  <img src="assets/screens/personajes.png" alt="Kraken y Frida en sus distintos estados" width="100%">
+</p>
+
+Cada uno tiene su propia voz, su personalidad (su propio flujo de n8n) y se cambia manteniendo `BOOT`.
+Se animan en reposo, escuchando, pensando, hablando, error y dormido.
+
+<p align="center">
+  <img src="assets/screens/frida_contenta.png" width="220" alt="Frida contenta al tocarla">
+</p>
 
 ## Botones
 - **PLUS (GPIO4)**: Pomodoro, iniciar/pausar (mantener: reset). Reloj, campanita por hora.
@@ -43,7 +81,7 @@ Mantené apretado `+` y hablá; al soltar:
 
 1. Groq (`whisper-large-v3-turbo`) transcribe el audio.
 2. El texto va por POST `{"message": "..."}` al webhook de n8n, que responde `{"text": "..."}`.
-3. OpenAI TTS (`gpt-4o-mini-tts`) lo dice en voz alta mientras Krakbot mueve la boca.
+3. OpenAI TTS (`gpt-4o-mini-tts`) lo dice en voz alta mientras el personaje mueve la boca.
 
 | Control | Acción |
 |---|---|
@@ -52,7 +90,7 @@ Mantené apretado `+` y hablá; al soltar:
 | `BOOT` en reposo | Historial: última charla; cada toque va a una más vieja |
 | `BOOT` ocupado | Cancela el turno actual |
 | Mantener `BOOT` (0,7 s) | Cambia de skin (aspecto + voz); se recuerda al reiniciar |
-| Tocar la pantalla | Despierta del modo ZZZ (a los 45 s sin uso) y Krakbot reacciona; sale del historial |
+| Tocar la pantalla | Despierta del modo ZZZ (a los 45 s sin uso) y el personaje reacciona; sale del historial |
 
 El historial guarda las últimas 8 charlas en memoria (se pierden al reiniciar).
 El Wi-Fi se mantiene mientras estés en esta pose y se apaga tras 60 s sin uso.
@@ -106,3 +144,7 @@ cambiá el path del webhook y su prompt.
 #### 3. Voz
 Los skins (aspecto y voz) se definen en la tabla `SKINS` de `src/agent.cpp`: voz de OpenAI, instrucciones de estilo y cuánto efecto robótico lleva.
 Las conexiones HTTPS validan certificados con el bundle de CA del core, por lo que necesitan la hora NTP.
+
+## Imágenes del README
+Se generan con `PRESS_START_2P=/ruta/PressStart2P-Regular.ttf python3 tools/render_readme_images.py`
+(fuente [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P), licencia OFL).
