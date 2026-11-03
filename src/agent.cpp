@@ -21,9 +21,12 @@
 #define STT_MODEL "whisper-large-v3-turbo"
 #define TTS_URL "https://api.openai.com/v1/audio/speech"
 #define TTS_MODEL "gpt-4o-mini-tts"
-#define TTS_VOICE "ash"
-#define TTS_STYLE "Hablá en español rioplatense, con voz grave, pausada y un poco dramática, como un viejo lobo de mar."
+#define TTS_VOICE "echo"
+#define TTS_STYLE "Sos un pulpito robot de dibujos animados: voz aguda, chistosa y juguetona, con un tono levemente metálico y robótico, con pausas cortas y entusiasmo exagerado, en español rioplatense."
 #define TTS_GAIN 0.8f
+#define ROBOT_MIX 0.4f      // 0 = clean voice; ring-modulation depth for the robot buzz
+#define ROBOT_HZ 80.0f
+#define ROBOT_CRUSH 6       // low bits dropped from the 16-bit sample (8-bit grit)
 
 #define RATE 16000
 #define MAX_REC_S 15
@@ -245,13 +248,16 @@ struct Resampler {   // 24 kHz -> 16 kHz, linear interpolation, state kept acros
   int16_t prev = 0;
   int16_t out[512];
   int fill = 0;
+  uint32_t outCount = 0;
   void flush() {
     if (fill) streamWrite(out, fill);
     fill = 0;
   }
   void push(int16_t x) {
     while (t < n) {
-      float v = (prev + (x - prev) * (t - (n - 1))) * TTS_GAIN;
+      float v = prev + (x - prev) * (t - (n - 1));
+      v *= (1.0f - ROBOT_MIX) + ROBOT_MIX * sinf(6.2831853f * ROBOT_HZ * (float)(outCount++) / RATE);
+      v = ((int)v >> ROBOT_CRUSH << ROBOT_CRUSH) * TTS_GAIN;
       out[fill++] = (int16_t)constrain((int)v, -32768, 32767);
       if (fill == 512) flush();
       t += 1.5f;
