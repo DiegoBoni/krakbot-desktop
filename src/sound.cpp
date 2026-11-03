@@ -3,11 +3,14 @@
 #include <Wire.h>
 #include <ESP_I2S.h>
 #include "es8311.h"
+#include "es7210.h"
 
 #define PA_CTRL 7
 #define I2S_MCLK 8
 #define I2S_BCLK 9
 #define I2S_DOUT 12
+#define I2S_DIN 11
+#define MIC_GAIN ES7210_MIC_GAIN_24DB
 #define I2S_LRC 10
 #define RATE 16000
 #define VOLUME 70           // codec volume 0-100
@@ -16,6 +19,7 @@
 static I2SClass i2s;
 static QueueHandle_t q;
 static int amp = AMPLITUDE;
+static volatile bool streaming = false;
 
 struct Note { uint16_t hz, ms; };   // hz 0 = silence
 
@@ -48,8 +52,7 @@ static void soundTask(void *) {
   bool paOn = false;
   for (;;) {
     if (xQueueReceive(q, &s, paOn ? pdMS_TO_TICKS(2000) : portMAX_DELAY) != pdTRUE) {
-      digitalWrite(PA_CTRL, LOW);   // idle: power the amp down
-      paOn = false;
+      if (!streaming) { digitalWrite(PA_CTRL, LOW); paOn = false; }   // idle: power the amp down
       continue;
     }
     if (!paOn) { digitalWrite(PA_CTRL, HIGH); paOn = true; delay(20); }
@@ -83,10 +86,46 @@ void soundInit() {
   es8311_voice_volume_set(es, VOLUME, NULL);
   es8311_microphone_config(es, false);
 
-  i2s.setPins(I2S_BCLK, I2S_LRC, I2S_DOUT, -1, I2S_MCLK);
+  es7210_dev_handle_t adc = nullptr;
+  es7210_i2c_config_t adcI2c = {};
+  adcI2c.i2c_addr = ES7210_ADDRRES_00;
+  es7210_codec_config_t adcCfg = {};
+  adcCfg.sample_rate_hz = RATE;
+  adcCfg.mclk_ratio = 256;
+  adcCfg.i2s_format = ES7210_I2S_FMT_I2S;
+  adcCfg.bit_width = ES7210_I2S_BITS_16B;
+  adcCfg.mic_bias = ES7210_MIC_BIAS_2V87;
+  adcCfg.mic_gain = MIC_GAIN;
+  if (es7210_new_codec(&adcI2c, &adc) == ESP_OK) es7210_config_codec(adc, &adcCfg);
+
+  i2s.setPins(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_DIN, I2S_MCLK);
+  i2s.setTimeout(500);
   i2s.begin(I2S_MODE_STD, RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO, I2S_STD_SLOT_BOTH);
   q = xQueueCreate(8, sizeof(Sound));
   xTaskCreate(soundTask, "sound", 4096, nullptr, 2, nullptr);
 }
 
 void soundPlay(Sound s) { xQueueSend(q, &s, 0); }
+
+size_t micRead(int16_t *stereo, size_t frames) {
+  return i2s.readBytes((char *)stereo, frames * 4) / 4;
+}
+
+void streamBegin() { streaming = true; digitalWrite(PA_CTRL, HIGH); delay(20); }
+
+void streamWrite(const int16_t *mono, size_t samples) {
+  static int16_t buf[2 * 512];
+  while (samples) {
+    size_t c = min(samples, (size_t)512);
+    for (size_t i = 0; i < c; i++) buf[2 * i] = buf[2 * i + 1] = mono[i];
+    i2s.write((uint8_t *)buf, c * 4);
+    mono += c;
+    samples -= c;
+  }
+}
+
+void streamEnd() {
+  int16_t z[2 * 256] = {0};
+  i2s.write((uint8_t *)z, sizeof(z));   // flush the tail with silence
+  streaming = false;
+}

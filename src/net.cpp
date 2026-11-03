@@ -17,6 +17,7 @@
 static volatile NetStatus status = NET_NOCFG;
 static WeatherData weather;
 static bool timeSynced = false;
+static SemaphoreHandle_t radio;   // owner has the right to touch the Wi-Fi state
 
 static bool connectWifi() {
   WiFi.mode(WIFI_STA);
@@ -63,6 +64,7 @@ static void netTask(void *) {
   uint32_t lastNtp = 0;
   for (;;) {
     if (strlen(WIFI_SSID) == 0) { status = NET_NOCFG; vTaskDelay(pdMS_TO_TICKS(30000)); continue; }
+    if (xSemaphoreTake(radio, pdMS_TO_TICKS(30000)) != pdTRUE) continue;   // agent is using it
     status = NET_CONNECTING;
     bool ok = false;
     if (connectWifi()) {
@@ -72,11 +74,28 @@ static void netTask(void *) {
     WiFi.disconnect(true, false);   // radio off between refreshes to save battery
     WiFi.mode(WIFI_OFF);
     status = ok ? NET_OK : NET_FAIL;
+    xSemaphoreGive(radio);
     vTaskDelay(pdMS_TO_TICKS(ok ? REFRESH_OK_MS : REFRESH_FAIL_MS));
   }
 }
 
-void netInit() { xTaskCreate(netTask, "net", 8192, nullptr, 1, nullptr); }
+void netInit() { radio = xSemaphoreCreateMutex(); xTaskCreate(netTask, "net", 8192, nullptr, 1, nullptr); }
 NetStatus netStatus() { return status; }
 WeatherData netWeather() { return weather; }
 bool netTime(struct tm &t) { return timeSynced && getLocalTime(&t, 0); }
+
+bool netAcquire(uint32_t timeoutMs) {
+  if (strlen(WIFI_SSID) == 0) return false;
+  if (xSemaphoreTake(radio, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) return false;
+  if (!connectWifi()) { WiFi.mode(WIFI_OFF); xSemaphoreGive(radio); return false; }
+  if (!timeSynced) syncTime();   // certificate checks need a valid clock
+  return true;
+}
+
+void netRelease() {
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  xSemaphoreGive(radio);
+}
+
+bool netConnected() { return WiFi.status() == WL_CONNECTED; }

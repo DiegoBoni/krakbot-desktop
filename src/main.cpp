@@ -9,6 +9,7 @@
 #include "net.h"
 #include "clock.h"
 #include "brightness.h"
+#include "agent.h"
 #include "SensorQMI8658.hpp"
 
 #define GFX_BL 46
@@ -89,6 +90,7 @@ void setup() {
   soundInit();
   netInit();
   clockInit();
+  agentInit();
 }
 
 void loop() {
@@ -99,12 +101,14 @@ void loop() {
     if (p != candidate) { candidate = p; candidateSince = now; }
     if (p != POSE_NONE && p != current && now - candidateSince >= HOLD_MS) {
       Pose prev = current;
+      if (prev == POSE_RIGHT) agentLeave();
       current = p;
       if (prev == POSE_FLAT) gfx->displayOn();
       if (current == POSE_FLAT) { backlightSleep(true); gfx->displayOff(); }
       else {
         if (current == POSE_UP) { gfx->setRotation(ROT[POSE_UP]); pomodoroEnter(); }
         else if (current == POSE_LEFT) { gfx->setRotation(ROT[POSE_LEFT]); clockEnter(); }
+        else if (current == POSE_RIGHT) { gfx->setRotation(ROT[POSE_RIGHT]); agentEnter(); }
         else drawPose(current, acc.x, acc.y, acc.z);
         if (prev == POSE_FLAT) backlightSleep(false);   // light up only after the new screen is painted
       }
@@ -112,7 +116,6 @@ void loop() {
     static uint32_t lastLog = 0;
     if (now - lastLog > 300) {
       lastLog = now;
-      if (current == POSE_RIGHT) drawReadout(acc.x, acc.y, acc.z);
       if (Serial) Serial.printf("ax=%.2f ay=%.2f az=%.2f pose=%d\n", acc.x, acc.y, acc.z, (int)current);
     }
   }
@@ -128,10 +131,19 @@ void loop() {
     if (plus == EV_LONG) pomodoroAction(POMO_RESET);
     if (boot == EV_CLICK) pomodoroAction(POMO_NEXT);
   }
+  if (current == POSE_RIGHT) {
+    static bool talking = false;
+    bool held = buttonsHeld(BTN_PLUS);
+    if (held && !talking) agentPress();
+    if (!held && talking) agentRelease();
+    talking = held;
+    if (boot == EV_CLICK) agentCancel();
+  }
   if (current == POSE_LEFT) {
     if (boot == EV_CLICK) { backlightCycle(); soundPlay(SND_CLICK); }
     if (plus == EV_CLICK) clockToggleChime();
   }
+  agentTick(current == POSE_RIGHT);
   pomodoroTick(current == POSE_UP);
   clockBackground();
   clockTick(current == POSE_LEFT);

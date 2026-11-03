@@ -2,3 +2,8 @@
 #pragma once
 #define WIFI_SSID ""
 #define WIFI_PASS ""
+
+// Voice agent (right pose).
+#define GROQ_API_KEY ""                   // https://console.groq.com/keys
+#define OPENAI_API_KEY ""                 // https://platform.openai.com/api-keys
+#define N8N_WEBHOOK_URL ""                // production URL of the n8n webhook (POST {"message": "..."} -> {"text": "..."})

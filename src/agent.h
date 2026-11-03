@@ -1,0 +1,9 @@
+#pragma once
+// Voice agent: hold PLUS to talk -> Groq (speech to text) -> n8n webhook (AI agent) -> OpenAI (text to speech).
+void agentInit();                  // starts the worker task (needs sound + net up)
+void agentEnter();                 // pose became active: repaint, bring the radio up
+void agentLeave();                 // pose left: abort whatever is running, radio off
+void agentTick(bool visible);      // animation + status; call every loop
+void agentPress();                 // PLUS pushed down
+void agentRelease();               // PLUS let go
+void agentCancel();                // BOOT: stop talking / drop the current turn

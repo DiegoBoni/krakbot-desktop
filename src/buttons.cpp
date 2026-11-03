@@ -20,3 +20,5 @@ BtnEvent buttonsPoll(Btn b) {
   }
   return EV_NONE;
 }
+
+bool buttonsHeld(Btn b) { return digitalRead(PIN[b]) == LOW; }

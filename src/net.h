@@ -15,3 +15,8 @@ void netInit();                    // starts the background Wi-Fi/NTP/weather ta
 NetStatus netStatus();
 WeatherData netWeather();
 bool netTime(struct tm &t);        // false until NTP has set the clock
+
+// The agent holds the radio for its whole session; the background task waits its turn.
+bool netAcquire(uint32_t timeoutMs);   // takes the radio and connects; false on timeout/failure
+void netRelease();                      // radio off, background task may run again
+bool netConnected();
