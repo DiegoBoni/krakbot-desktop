@@ -139,6 +139,7 @@ void loop() {
     if (!held && talking) agentRelease();
     talking = held;
     if (boot == EV_CLICK) agentBoot();
+    if (boot == EV_LONG) agentSkinNext();
   }
   if (current == POSE_LEFT) {
     if (boot == EV_CLICK) { backlightCycle(); soundPlay(SND_CLICK); }

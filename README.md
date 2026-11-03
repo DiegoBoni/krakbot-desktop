@@ -33,7 +33,12 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 
 ## Agente de voz (pose derecha)
 
-Krakbot, un pulpo pixelado animado (reposo, escuchando, pensando, hablando, error y dormido).
+Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
+
+- **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
+- **Orbe**: esfera de píxeles de colores brillantes con cara, voz de mujer elegante (`nova`).
+
+Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:
 
 1. Groq (`whisper-large-v3-turbo`) transcribe el audio.
@@ -46,6 +51,7 @@ Mantené apretado `+` y hablá; al soltar:
 | Tocar `+` mientras habla | Interrumpe la respuesta |
 | `BOOT` en reposo | Historial: última charla; cada toque va a una más vieja |
 | `BOOT` ocupado | Cancela el turno actual |
+| Mantener `BOOT` (0,7 s) | Cambia de skin (aspecto + voz); se recuerda al reiniciar |
 | Tocar la pantalla | Despierta del modo ZZZ (a los 45 s sin uso) y Krakbot reacciona; sale del historial |
 
 El historial guarda las últimas 8 charlas en memoria (se pierden al reiniciar).
@@ -88,5 +94,5 @@ y personalidad de Kraken) → Respond to Webhook (`{"text": "..."}`). La persona
 *System Message* del nodo AI Agent.
 
 #### 3. Voz
-La voz y el estilo se ajustan con `TTS_VOICE` y `TTS_STYLE` en `src/agent.cpp`.
+Los skins (aspecto y voz) se definen en la tabla `SKINS` de `src/agent.cpp`: voz de OpenAI, instrucciones de estilo y cuánto efecto robótico lleva.
 Las conexiones HTTPS validan certificados con el bundle de CA del core, por lo que necesitan la hora NTP.

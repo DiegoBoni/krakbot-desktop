@@ -6,6 +6,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
 #ifndef GROQ_API_KEY
 #define GROQ_API_KEY ""
@@ -21,12 +22,8 @@
 #define STT_MODEL "whisper-large-v3-turbo"
 #define TTS_URL "https://api.openai.com/v1/audio/speech"
 #define TTS_MODEL "gpt-4o-mini-tts"
-#define TTS_VOICE "echo"
-#define TTS_STYLE "Sos un pulpito robot de dibujos animados: voz aguda, chistosa y juguetona, con un tono levemente metálico y robótico, con pausas cortas y entusiasmo exagerado, en español rioplatense."
 #define TTS_GAIN 0.8f
-#define ROBOT_MIX 0.4f      // 0 = clean voice; ring-modulation depth for the robot buzz
 #define ROBOT_HZ 80.0f
-#define ROBOT_CRUSH 6       // low bits dropped from the 16-bit sample (8-bit grit)
 
 #define RATE 16000
 #define MAX_REC_S 15
@@ -37,6 +34,24 @@
 
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern const uint8_t rootca_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
+
+// Each skin is a look plus a voice. Skin 0 is the boyish robot octopus, skin 1 an elegant pixel orb.
+struct Skin {
+  const char *name, *voice, *style;
+  float robotMix;      // ring-modulation depth (0 = clean voice)
+  int crush;           // low bits dropped for 8-bit grit
+  uint16_t accent;
+};
+static const Skin SKINS[] = {
+  {"KRAKEN", "echo",
+   "Sos un pulpito robot varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con un tono levemente metálico y robótico, pausas cortas y entusiasmo exagerado, en español rioplatense.",
+   0.4f, 6, 0xE28A},
+  {"ORBE", "nova",
+   "Hablá en español rioplatense con voz de mujer elegante, cálida y serena, pausada, refinada y con un toque de misterio.",
+   0.0f, 0, 0xF81F},
+};
+#define SKIN_COUNT 2
+static volatile int skinIdx = 0;
 
 enum AgState { AG_IDLE, AG_CONNECTING, AG_LISTENING, AG_TRANSCRIBING, AG_THINKING, AG_SPEAKING, AG_ERROR, AG_SLEEP, AG_HAPPY };
 
@@ -249,6 +264,8 @@ struct Resampler {   // 24 kHz -> 16 kHz, linear interpolation, state kept acros
   int16_t out[512];
   int fill = 0;
   uint32_t outCount = 0;
+  float mix = 0;
+  int crush = 0;
   void flush() {
     if (fill) streamWrite(out, fill);
     fill = 0;
@@ -256,8 +273,8 @@ struct Resampler {   // 24 kHz -> 16 kHz, linear interpolation, state kept acros
   void push(int16_t x) {
     while (t < n) {
       float v = prev + (x - prev) * (t - (n - 1));
-      v *= (1.0f - ROBOT_MIX) + ROBOT_MIX * sinf(6.2831853f * ROBOT_HZ * (float)(outCount++) / RATE);
-      v = ((int)v >> ROBOT_CRUSH << ROBOT_CRUSH) * TTS_GAIN;
+      if (mix > 0) v *= (1.0f - mix) + mix * sinf(6.2831853f * ROBOT_HZ * (float)(outCount++) / RATE);
+      v = ((int)v >> crush << crush) * TTS_GAIN;
       out[fill++] = (int16_t)constrain((int)v, -32768, 32767);
       if (fill == 512) flush();
       t += 1.5f;
@@ -281,8 +298,9 @@ static bool speak(const String &text) {
   JsonDocument doc;
   doc["model"] = TTS_MODEL;
   doc["input"] = say;
-  doc["voice"] = TTS_VOICE;
-  doc["instructions"] = TTS_STYLE;
+  const Skin &sk = SKINS[skinIdx];
+  doc["voice"] = sk.voice;
+  doc["instructions"] = sk.style;
   doc["response_format"] = "pcm";   // 24 kHz, 16-bit, mono
   String body;
   serializeJson(doc, body);
@@ -295,6 +313,8 @@ static bool speak(const String &text) {
   auto *s = http.getStreamPtr();
   static Resampler rs;
   rs = Resampler();
+  rs.mix = sk.robotMix;
+  rs.crush = sk.crush;
   streamBegin();
   uint8_t buf[2048];
   uint8_t odd = 0;
@@ -436,6 +456,17 @@ static void blk(int gx, int gy, int gw, int gh, uint16_t c) {
 }
 
 static uint32_t frameMs(AgState s) {
+  if (skinIdx == 1) {   // the orb animates faster
+    switch (s) {
+      case AG_LISTENING: return 110;
+      case AG_SPEAKING: return 90;
+      case AG_HAPPY: return 80;
+      case AG_SLEEP: return 500;
+      case AG_ERROR: return 140;
+      case AG_IDLE: return 200;
+      default: return 120;
+    }
+  }
   switch (s) {
     case AG_THINKING: return 180;
     case AG_CONNECTING: return 180;
@@ -521,6 +552,73 @@ static void drawKraken(AgState s, int frame) {
   }
 }
 
+
+// ---- skin 1: pixel orb ----------------------------------------------------------------------------
+
+static const uint16_t ORB_PAL[6] = {0xF81F, 0x07FF, 0xFFE0, 0x07E0, 0xFD20, 0x781F};   // magenta cyan yellow green orange violet
+static const uint16_t ORB_DIM[3] = {0x1010, 0x0811, 0x2014};
+
+static void drawOrb(AgState s, int frame) {
+  const int P = 8, GX = 24, GY = 16, X0 = 24, Y0 = 6;
+  float cx = GX / 2.0f - 0.5f, cy = GY / 2.0f - 0.5f;
+  float r = 6.2f + 0.5f * sinf(frame * 0.4f);
+  int lift = 0;
+  switch (s) {
+    case AG_SPEAKING: r = 5.4f + 1.6f * fabsf(sinf(frame * 0.9f)); break;
+    case AG_LISTENING: r = 5.0f + min((int)level, 100) / 60.0f; break;
+    case AG_SLEEP: r = 4.2f + 0.5f * sinf(frame * 0.5f); break;
+    case AG_HAPPY: r = 6.4f; lift = (frame % 2) ? -8 : 0; break;
+    default: break;
+  }
+  cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
+  for (int y = 0; y < GY; y++) {
+    for (int x = 0; x < GX; x++) {
+      float dx = x - cx, dy = (y - cy) * 1.0f, d = sqrtf(dx * dx + dy * dy);
+      if (d > r) continue;
+      uint16_t c;
+      switch (s) {
+        case AG_SLEEP: c = ORB_DIM[((x * 3 + y * 5 + frame) % 11) == 0 ? 2 : (x + y) % 2]; break;
+        case AG_ERROR: c = ((x + y + frame) % 2) ? 0xF800 : 0x4000; break;
+        case AG_LISTENING: c = (((int)(d * 1.0f) + frame) % 2) ? 0x07FF : 0xFFE0; break;
+        case AG_THINKING: case AG_TRANSCRIBING: case AG_CONNECTING: {
+          float a = atan2f(dy, dx) + 3.1416f;
+          c = ORB_PAL[((int)(a * 6.0f / 6.2832f) + frame) % 6];
+          break; }
+        case AG_SPEAKING: c = ORB_PAL[((int)(d * 1.4f) + 60 - frame) % 6]; break;
+        case AG_HAPPY: c = ORB_PAL[(x + y + frame * 2) % 6]; break;
+        default: c = ORB_PAL[((x + y) / 3 + frame / 2) % 6]; break;
+      }
+      float hx = x - (cx - 2.6f), hy = y - (cy - 2.6f);
+      if (s != AG_SLEEP && s != AG_ERROR && hx * hx + hy * hy < 2.2f) c = COL_TEXT;   // glossy highlight
+      cv->fillRect(X0 + x * P, Y0 + lift + y * P, P, P, c);
+    }
+  }
+  // face: two eyes and a mouth cut out of the orb
+  int ex = X0 + (int)(cx * P), ey = Y0 + lift + (int)((cy - 0.5f) * P);
+  bool shut = s == AG_SLEEP || s == AG_HAPPY || (s == AG_IDLE && frame % 12 == 11);
+  for (int e = -1; e <= 1; e += 2) {
+    int x = ex + e * 3 * P - (e < 0 ? 0 : 0);
+    if (shut) cv->fillRect(x, ey + P, P * 2, P / 2, 0x0000);
+    else cv->fillRect(x, ey, P * 2, P * 2, 0x0000);
+    if (!shut) cv->fillRect(x + P, ey, P / 2 + 1, P / 2 + 1, COL_TEXT);
+  }
+  int mw = (s == AG_SPEAKING) ? (1 + (frame % 3)) : 1;
+  cv->fillRect(ex + P - mw * P / 2, ey + 4 * P, (mw + 1) * P, (s == AG_SPEAKING ? 2 : 1) * P / 2 + (s == AG_SPEAKING ? P / 2 : 0), 0x0000);
+
+  // pixels orbiting the orb
+  if (s != AG_SLEEP) {
+    for (int i = 0; i < 4; i++) {
+      float a = frame * (s == AG_SPEAKING ? 0.5f : 0.25f) + i * 1.5708f;
+      int px = X0 + (int)((cx + (r + 1.8f) * cosf(a)) * P), py = Y0 + lift + (int)((cy + (r + 1.8f) * 0.8f * sinf(a)) * P);
+      cv->fillRect(px, py, P, P, ORB_PAL[(i + frame) % 6]);
+    }
+  }
+  if (s == AG_LISTENING) {
+    cv->drawFastHLine(KX, CANVAS_H - 3, 192, COL_DIM);
+    cv->fillRect(KX, CANVAS_H - 5, 192 * min((int)level, 100) / 100, 4, YELLOW);
+  }
+}
+
 static void textCentered(const char *t, int cx, int baseline, uint8_t size, uint16_t col) {
   gfx->setFont(u8g2_font_pressstart2p_8r);
   gfx->setTextSize(size);
@@ -537,7 +635,7 @@ static const char *labelFor(AgState s, uint16_t &col) {
     case AG_LISTENING: col = YELLOW; return "ESCUCHANDO";
     case AG_TRANSCRIBING: col = 0x07FF; return "TRANSCRIBIENDO";
     case AG_THINKING: col = 0xAB7F; return "PENSANDO";
-    case AG_SPEAKING: col = CORAL; return "HABLANDO";
+    case AG_SPEAKING: col = SKINS[skinIdx].accent; return "HABLANDO";
     case AG_ERROR: col = 0xF800; return "ERROR";
     case AG_SLEEP: col = COL_DIM; return "ZZZ";
     case AG_HAPPY: col = YELLOW; return "HOLA!";
@@ -678,7 +776,27 @@ void agentTouch() {
   if (state == AG_IDLE || state == AG_ERROR) pokeUntil = millis() + 1400;
 }
 
+static void skinSave() {
+  Preferences p;
+  if (p.begin("orient", false)) { p.putUChar("skin", skinIdx); p.end(); }
+}
+
+void agentSkinNext() {
+  if (!active || histMode || (state != AG_IDLE && state != AG_ERROR)) return;
+  skinIdx = (skinIdx + 1) % SKIN_COUNT;
+  skinSave();
+  lastActivity = millis();
+  pokeUntil = millis() + 1400;
+  char msg[24];
+  snprintf(msg, sizeof(msg), "SKIN: %s", SKINS[skinIdx].name);
+  showText(msg, SKINS[skinIdx].accent);
+  needRepaint = true;
+  soundPlay(SND_START);
+}
+
 void agentInit() {
+  Preferences p;
+  if (p.begin("orient", true)) { skinIdx = p.getUChar("skin", 0) % SKIN_COUNT; p.end(); }
   xTaskCreate(agentTask, "agent", 16384, nullptr, 1, &task);
 }
 
@@ -707,7 +825,7 @@ void agentTick(bool visible) {
   if ((frame != cFrame || s != cSt || lv != cLevel) && now - lastDraw >= 40) {
     lastDraw = now;
     cFrame = frame; cSt = s; cLevel = lv;
-    drawKraken(s, frame);
+    if (skinIdx == 1) drawOrb(s, frame); else drawKraken(s, frame);
     cv->flush();
   }
 
