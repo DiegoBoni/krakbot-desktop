@@ -48,14 +48,15 @@ struct Skin {
 };
 static const Skin SKINS[] = {
   {"KRAKEN", "echo",
-   "Sos un pulpito robot varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con un tono levemente metálico y robótico, pausas cortas y entusiasmo exagerado, en español rioplatense.",
-   0.4f, 6, 0xE28A},
+   "Sos un pulpito varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con pausas cortas y entusiasmo exagerado, en español rioplatense.",
+   0.0f, 0, 0xE28A},
   {"FRIDA", "nova",
    "Hablá en español rioplatense con voz de chica joven, simpática, pícara y coqueta, con una sonrisita traviesa, tono canchero, cálido y juguetón.",
    0.0f, 0, 0xFB56},
 };
 #define SKIN_COUNT 2
 static volatile int skinIdx = 0;
+static volatile uint32_t speakDurMs = 1;   // length of the reply being played, to page the text with it
 
 // Each character can have its own n8n flow (and so its own personality); Frida falls back to the main one.
 static const char *hookUrl() {
@@ -343,6 +344,7 @@ static bool speak(const String &text) {
   if (Serial) Serial.printf("tts %u samples\n", (unsigned)n);
   if (abortReq || n < 480) return !abortReq ? false : true;
 
+  speakDurMs = (uint32_t)((n - 1) * 2 / 3 * 1000ULL / RATE) + 1;
   setState(AG_SPEAKING);
   const int16_t *in = (const int16_t *)pcm;
   const uint32_t total = (uint32_t)((n - 1) * 2 / 3);   // 24 kHz -> 16 kHz
@@ -672,7 +674,9 @@ static const char *labelFor(AgState s, uint16_t &col) {
 
 static bool needRepaint = true;
 #define LINE_CH 28
-#define LINES_PER_PAGE 6
+#define LINES_PER_PAGE 4
+#define MAIN_CH 25          // characters per line at the reading font (9 px)
+#define MAIN_LH 17
 static char lines[24][LINE_CH + 1];
 static int nLines;
 
@@ -696,7 +700,7 @@ static int wrapInto(char (*lines)[LINE_CH + 1], int maxLines, const char *t, int
   return nLines;
 }
 
-static void wrapText(const char *t) { nLines = wrapInto(lines, 24, t); }
+static void wrapText(const char *t) { nLines = wrapInto(lines, 24, t, MAIN_CH); }
 
 // Reading view: bigger font than the rest of the UI, one turn per page. The text lives in an offscreen
 // canvas that is scrolled pixel by pixel with the finger, so nothing is redrawn piecemeal.
@@ -936,18 +940,17 @@ void agentTick(bool visible) {
     cPage = -1;
   }
   int pages = max(1, (nLines + LINES_PER_PAGE - 1) / LINES_PER_PAGE);
-  int page = s == AG_SPEAKING ? min(pages - 1, (int)((now - speakStart) / 9000)) : (cPage >= 0 ? cPage : 0);
+  int page = s == AG_SPEAKING ? min(pages - 1, (int)((uint64_t)(now - speakStart) * pages / (uint32_t)speakDurMs)) : (cPage >= 0 ? cPage : 0);
   if (page != cPage) {
     cPage = page;
     gfx->fillRect(0, CANVAS_H + 30, 240, 240 - CANVAS_H - 30, COL_BG);
-    gfx->setFont(u8g2_font_pressstart2p_8r);
-    gfx->setTextSize(1);
+    gfx->setFont(H_FONT);
     gfx->setTextColor(shownCol);
     for (int i = 0; i < LINES_PER_PAGE; i++) {
       int li = page * LINES_PER_PAGE + i;
       if (li >= nLines) break;
-      int x = (nLines == 1 && strlen(lines[0]) < 24) ? 120 - (int)strlen(lines[li]) * 4 : 8;
-      gfx->setCursor(x, CANVAS_H + 44 + i * 11);
+      int x = (nLines == 1 && strlen(lines[0]) < 22) ? 120 - (int)strlen(lines[li]) * 9 / 2 : 8;
+      gfx->setCursor(x, CANVAS_H + 41 + i * MAIN_LH);
       gfx->print(lines[li]);
     }
   }
