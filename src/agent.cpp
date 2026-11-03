@@ -226,6 +226,24 @@ static String transcribe(const int16_t *pcm, size_t n) {
   return text;
 }
 
+// Replies are capped so the spoken audio always fits in memory: cut at the last sentence end (or word)
+// inside the limit, so the answer is short but never chopped mid-word.
+#define MAX_REPLY 320
+static void clampReply(String &t) {
+  if ((int)t.length() <= MAX_REPLY) return;
+  int cut = -1;
+  for (int i = MAX_REPLY - 1; i > MAX_REPLY / 2; i--)
+    if (t[i] == '.' || t[i] == '!' || t[i] == '?') { cut = i + 1; break; }
+  if (cut < 0) {
+    cut = t.lastIndexOf(' ', MAX_REPLY - 1);
+    if (cut < MAX_REPLY / 2) cut = MAX_REPLY;
+    t = t.substring(0, cut);
+    t += ".";
+    return;
+  }
+  t = t.substring(0, cut);
+}
+
 static String askAgent(const String &msg) {
   WiFiClientSecure client;
   tlsSetup(client);
@@ -239,7 +257,7 @@ static String askAgent(const String &msg) {
   String body;
   serializeJson(doc, body);
   int code = http.POST(body);
-  String resp = http.getString();
+  String resp = http.getSize() > 8000 ? String() : http.getString();   // never buffer a runaway reply
   if (Serial) Serial.printf("n8n %d %s\n", code, resp.substring(0, 200).c_str());
   if (code == 200) {
     JsonDocument r;
@@ -250,6 +268,7 @@ static String askAgent(const String &msg) {
   }
   http.end();
   out.trim();
+  clampReply(out);
   return out;
 }
 
@@ -288,7 +307,9 @@ struct PcmSink : public Stream {
 static bool speak(const String &text) {
   String say = spokenText(text);
   if (say.isEmpty()) return true;
-  const size_t CAP = 24000UL * 2 * 40;   // up to 40 s of 24 kHz mono
+  if (Serial) Serial.printf("speak: %u chars, heap %u (min %u), psram %u\n", (unsigned)say.length(),
+                            (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getFreePsram());
+  const size_t CAP = 24000UL * 2 * 28;   // up to 28 s of 24 kHz mono (replies are clamped well below that)
   static uint8_t *pcm;
   if (!pcm) pcm = (uint8_t *)ps_malloc(CAP);
   if (!pcm) return false;
@@ -677,14 +698,16 @@ static int wrapInto(char (*lines)[LINE_CH + 1], int maxLines, const char *t, int
 
 static void wrapText(const char *t) { nLines = wrapInto(lines, 24, t); }
 
-// Reading view: bigger font than the rest of the UI, one turn per page, scrolled by dragging.
+// Reading view: bigger font than the rest of the UI, one turn per page. The text lives in an offscreen
+// canvas that is scrolled pixel by pixel with the finger, so nothing is redrawn piecemeal.
 #define H_FONT u8g2_font_9x15_tr
 #define H_CH 25            // characters per line at 9 px
-#define H_LH 17            // line height
+#define H_LH 18            // line height
 #define H_TOP 24           // viewport (between header rule and footer rule)
 #define H_BOT 218
-#define H_ROWS ((H_BOT - H_TOP) / H_LH)
-static int histScroll = 0, histLines = 0;
+#define H_VIEW (H_BOT - H_TOP)
+static int histScrollPx = 0, histContentPx = 0, histShownIdx = -1;
+static Arduino_Canvas *hcv;
 
 static void drawHistory() {
   Turn t;
@@ -695,6 +718,10 @@ static void drawHistory() {
   t = hist[n];
   portEXIT_CRITICAL(&mux);
 
+  if (!hcv) {
+    hcv = new Arduino_Canvas(240, H_VIEW, gfx, 0, H_TOP);
+    hcv->begin(GFX_SKIP_OUTPUT_BEGIN);
+  }
   static char ql[6][LINE_CH + 1], al[14][LINE_CH + 1];
   struct Row { const char *s; uint16_t col; };
   static Row rows[24];
@@ -703,49 +730,54 @@ static void drawHistory() {
   for (int i = 0; i < nq; i++) rows[r++] = {ql[i], 0xBDF7};
   rows[r++] = {SKINS[skinIdx].name, CORAL};
   for (int i = 0; i < na; i++) rows[r++] = {al[i], COL_TEXT};
-  histLines = r;
-  histScroll = constrain(histScroll, 0, max(0, r - H_ROWS));
+  histContentPx = r * H_LH + 6;
+  histScrollPx = constrain(histScrollPx, 0, max(0, histContentPx - H_VIEW));
 
-  gfx->fillScreen(COL_BG);
-  gfx->setFont(u8g2_font_pressstart2p_8r);
-  gfx->setTextSize(1);
-  char head[24];
-  snprintf(head, sizeof(head), "HISTORIAL %d/%d", histIdx + 1, total);
-  gfx->setTextColor(CORAL);
-  gfx->setCursor(8, 16);
-  gfx->print(head);
-  gfx->drawFastHLine(0, 22, 240, COL_DIM);
+  if (histShownIdx != histIdx) {   // header and footer only when the page changes
+    histShownIdx = histIdx;
+    gfx->fillScreen(COL_BG);
+    gfx->setFont(u8g2_font_pressstart2p_8r);
+    gfx->setTextSize(1);
+    char head[24];
+    snprintf(head, sizeof(head), "HISTORIAL %d/%d", histIdx + 1, total);
+    gfx->setTextColor(CORAL);
+    gfx->setCursor(8, 16);
+    gfx->print(head);
+    gfx->drawFastHLine(0, 22, 240, COL_DIM);
+    gfx->drawFastHLine(0, 220, 240, COL_DIM);
+    gfx->setTextColor(COL_DIM);
+    gfx->setCursor(8, 234);
+    gfx->print("BOOT:SIG +:VOLVER");
+  }
 
-  gfx->setFont(H_FONT);
-  for (int i = 0; i < H_ROWS && histScroll + i < r; i++) {
-    gfx->setTextColor(rows[histScroll + i].col);
-    gfx->setCursor(8, H_TOP + 13 + i * H_LH);
-    gfx->print(rows[histScroll + i].s);
+  hcv->fillScreen(COL_BG);
+  hcv->setFont(H_FONT);
+  for (int i = 0; i < r; i++) {
+    int y = 14 + i * H_LH - histScrollPx;
+    if (y < 0 || y > H_VIEW + 2) continue;
+    hcv->setTextColor(rows[i].col);
+    hcv->setCursor(8, y);
+    hcv->print(rows[i].s);
   }
-  if (r > H_ROWS) {   // scroll bar
-    int bh = max(12, (H_BOT - H_TOP) * H_ROWS / r);
-    int by = H_TOP + (H_BOT - H_TOP - bh) * histScroll / (r - H_ROWS);
-    gfx->fillRect(237, by, 3, bh, COL_DIM);
+  if (histContentPx > H_VIEW) {   // scroll bar
+    int bh = max(14, H_VIEW * H_VIEW / histContentPx);
+    int by = (H_VIEW - bh) * histScrollPx / (histContentPx - H_VIEW);
+    hcv->fillRect(237, by, 3, bh, COL_DIM);
   }
-  gfx->drawFastHLine(0, 220, 240, COL_DIM);
-  gfx->setFont(u8g2_font_pressstart2p_8r);
-  gfx->setTextColor(COL_DIM);
-  gfx->setCursor(8, 234);
-  gfx->print("BOOT:SIG +:VOLVER");
+  hcv->flush();
 }
 
 bool agentInHistory() { return active && histMode; }
 
-// ldy: finger travel along the screen's vertical axis since touch-down (positive = down). Dragging the
-// text up reveals what is below it.
+// ldy: finger travel along the screen's vertical axis since the drag began (positive = down). The text
+// follows the finger one to one and stays where it is left.
 void agentHistDrag(int ldy, bool end) {
-  static int startScroll = -1;
-  if (!histMode) { startScroll = -1; return; }
+  static int startPx = -1;
+  if (end || !histMode) { startPx = -1; return; }
   lastActivity = millis();
-  if (startScroll < 0) startScroll = histScroll;
-  int v = constrain(startScroll - ldy / H_LH, 0, max(0, histLines - H_ROWS));
-  if (v != histScroll) { histScroll = v; histVerSeen = ~0u; }
-  if (end) startScroll = -1;
+  if (startPx < 0) startPx = histScrollPx;
+  int v = constrain(startPx - ldy, 0, max(0, histContentPx - H_VIEW));
+  if (v != histScrollPx) { histScrollPx = v; histVerSeen = ~0u; }
 }
 
 // True while a turn is in flight (recording, transcribing, thinking or speaking).
@@ -781,6 +813,7 @@ void agentRepaint() {
   if (!active) return;
   gfx->fillScreen(COL_BG);
   needRepaint = true;
+  histShownIdx = -1;
   histVerSeen = ~0u;
 }
 
@@ -810,14 +843,15 @@ void agentBoot() {
   if (!active) return;
   lastActivity = millis();
   if (histMode) {
-    if (++histIdx >= histCount) exitHistory(); else { histScroll = 0; histVerSeen = ~0u; }
+    if (++histIdx >= histCount) exitHistory(); else { histScrollPx = 0; histVerSeen = ~0u; }
     return;
   }
   if (state == AG_IDLE || state == AG_ERROR) {
     if (histCount == 0) { pokeUntil = millis() + 900; return; }
     histMode = true;
     histIdx = 0;
-    histScroll = 0;
+    histScrollPx = 0;
+    histShownIdx = -1;
     histVerSeen = ~0u;
     return;
   }

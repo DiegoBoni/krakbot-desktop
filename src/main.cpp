@@ -112,7 +112,7 @@ void handleTouch(const TouchEvent &te) {
     int ldy = current == POSE_UP ? te.dy : current == POSE_RIGHT ? -te.dx : te.dx;
     if (current == POSE_RIGHT && agentInHistory()) { agentHistDrag(ldy, false); return; }   // reading: scroll, not volume
     if (!volDrag) {
-      if (abs(ldy) < 14) return;
+      if (abs(ldy) < 6) return;
       volDrag = true;
       volStart = soundVolume();
     }
@@ -165,7 +165,7 @@ void loop() {
     Pose p = classify(acc.x, acc.y, acc.z);
     uint32_t now = millis();
     if (p != candidate) { candidate = p; candidateSince = now; }
-    bool hold = p == POSE_FLAT && current == POSE_RIGHT && agentBusy();   // agent mid-turn: stay lit until idle
+    bool hold = p == POSE_FLAT && current == POSE_RIGHT;   // agent mode never blanks on its own: it would cut a turn short
     if (p != POSE_NONE && p != current && !hold && now - candidateSince >= HOLD_MS) {
       Pose prev = current;
       if (prev == POSE_RIGHT) agentLeave();

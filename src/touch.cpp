@@ -48,7 +48,11 @@ TouchEvent touchPoll() {
   cy = ((yh & 0x0F) << 8) | yl;
   if (!down) { down = true; dragging = false; x0 = cx; y0 = cy; }
   ev.x = cx; ev.y = cy; ev.dx = cx - x0; ev.dy = cy - y0;
-  if (!dragging && (abs(ev.dx) > 14 || abs(ev.dy) > 14)) dragging = true;
+  if (!dragging && (abs(ev.dx) > 14 || abs(ev.dy) > 14)) {
+    dragging = true;      // the drag starts here: no jump of the first 14 px
+    x0 = cx; y0 = cy;
+    ev.dx = ev.dy = 0;
+  }
   if (dragging) ev.kind = TOUCH_DRAG;
   return ev;
 }
