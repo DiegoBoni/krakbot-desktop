@@ -52,7 +52,41 @@ El historial guarda las últimas 8 charlas en memoria (se pierden al reiniciar).
 El Wi-Fi se mantiene mientras estés en esta pose y se apaga tras 60 s sin uso.
 
 ### Configuración
-Las claves van en `src/secrets.h` (ignorado por git): `GROQ_API_KEY`, `OPENAI_API_KEY` y
-`N8N_WEBHOOK_URL`. El flujo de n8n es un Webhook (`POST /krakbot`) → AI Agent con memoria →
-Respond to Webhook. La voz y el estilo se ajustan con `TTS_VOICE` y `TTS_STYLE` en `src/agent.cpp`.
+
+#### 1. Claves de API
+Copiá la plantilla (el archivo real está en `.gitignore` y nunca se sube):
+
+```sh
+cp src/secrets.example.h src/secrets.h
+```
+
+y completá `src/secrets.h`:
+
+| Define | Qué es | Dónde se obtiene |
+|---|---|---|
+| `WIFI_SSID` / `WIFI_PASS` | Tu red Wi-Fi de 2,4 GHz | tu router |
+| `GROQ_API_KEY` | Transcripción de voz (`gsk_...`) | https://console.groq.com/keys |
+| `OPENAI_API_KEY` | Voz de la respuesta (`sk-...`) | https://platform.openai.com/api-keys |
+| `N8N_WEBHOOK_URL` | URL de producción del webhook de n8n | ver el paso siguiente |
+
+Después compilá y subí con `pio run -t upload`. Si falta alguna clave, la pantalla del agente dice
+"FALTAN CLAVES EN SECRETS.H".
+
+#### 2. Flujo de n8n
+El flujo está en [`n8n/krakbot-workflow.json`](n8n/krakbot-workflow.json), sin credenciales:
+
+1. En n8n: **Workflows → Import from file** y elegí ese JSON.
+2. Asigná tus credenciales en los nodos que las piden:
+   - **OpenAI Chat Model**: tu credencial *OpenAI API*.
+   - **MCP Client** (opcional, herramientas de Composio): una credencial *Header Auth* con tu clave de
+     Composio. Si no lo querés, borrá el nodo.
+3. Activá el workflow (**Active**) y copiá la **Production URL** del nodo Webhook
+   (`https://TU-N8N/webhook/krakbot`, no la de `webhook-test`) en `N8N_WEBHOOK_URL`.
+
+Flujo: Webhook (`POST /krakbot`, recibe `{"message": "..."}`) → AI Agent (GPT-5.1, memoria de ventana
+y personalidad de Kraken) → Respond to Webhook (`{"text": "..."}`). La personalidad se cambia en el
+*System Message* del nodo AI Agent.
+
+#### 3. Voz
+La voz y el estilo se ajustan con `TTS_VOICE` y `TTS_STYLE` en `src/agent.cpp`.
 Las conexiones HTTPS validan certificados con el bundle de CA del core, por lo que necesitan la hora NTP.
