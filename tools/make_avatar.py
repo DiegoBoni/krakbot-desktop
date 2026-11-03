@@ -128,6 +128,16 @@ out.append("};")
 (ROOT / "src" / "avatar_data.h").write_text("\n".join(out) + "\n")
 print(f"{len(palette)} colours, {len(frames)} frames")
 
+# Atlas for editing outside the repo: 3 columns (mouth 0..2) x 3 rows (eyes: open, closed, wink), 46x46 tiles.
+atlas = Image.new("RGBA", (3 * N, 3 * N), (0, 0, 0, 0))
+for i, f in enumerate(frames):
+    for y in range(N):
+        for x in range(N):
+            if f[y][x] != 255:
+                atlas.putpixel(((i % 3) * N + x, (i // 3) * N + y), palette[f[y][x]] + (255,))
+atlas.save(ROOT / "assets" / "frida_atlas.png")
+atlas.resize((3 * N * 8, 3 * N * 8), Image.NEAREST).save(ROOT / "assets" / "frida_atlas_x8.png")
+
 if "--preview" in sys.argv:
     S = 8
     sheet = Image.new("RGB", (3 * N * S, 3 * N * S), (0, 0, 0))
