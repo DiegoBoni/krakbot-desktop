@@ -46,7 +46,7 @@ static const Skin SKINS[] = {
   {"KRAKEN", "echo",
    "Sos un pulpito robot varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con un tono levemente metálico y robótico, pausas cortas y entusiasmo exagerado, en español rioplatense.",
    0.4f, 6, 0xE28A},
-  {"JARVIS", "nova",
+  {"SOLARPUNK", "nova",
    "Hablá en español rioplatense con voz de mujer elegante, cálida y serena, pausada, refinada y con un toque de misterio.",
    0.0f, 0, 0xF81F},
 };
@@ -553,86 +553,117 @@ static void drawKraken(AgState s, int frame) {
 }
 
 
-// ---- skin 1: abstract pixel core (Jarvis / Siri style) -------------------------------------------
-// Concentric dashed rings spin around a glowing core; while listening or talking the middle ring
-// turns into a radial equalizer. No face, just light.
+// ---- skin 1: solarpunk landscape -------------------------------------------------------------------
+// A low sun behind layered hills of pixel waves, with blooming flowers and drifting pollen.
+// The hills swell with your voice while listening and with the reply while talking.
 
 #define OP 6          // pixel size
-#define OGX 32
-#define OGY 21
-#define OX0 24
-#define OY0 7
-static float oD[OGY][OGX], oA[OGY][OGX];
-static bool oReady = false;
+#define OGX 40
+#define OGY 23
+#define RGB(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
 
-static uint16_t mix565(uint16_t a, uint16_t b, int t) {   // t 0..16
-  int ar = a >> 11, ag = (a >> 5) & 63, ab = a & 31, br = b >> 11, bg = (b >> 5) & 63, bb = b & 31;
-  return ((ar + (br - ar) * t / 16) << 11) | ((ag + (bg - ag) * t / 16) << 5) | (ab + (bb - ab) * t / 16);
+static uint16_t dim565(uint16_t c, int pct) {
+  int r = (c >> 11) * pct / 100, g = ((c >> 5) & 63) * pct / 100, b = (c & 31) * pct / 100;
+  return (r << 11) | (g << 5) | b;
+}
+
+static void cell(int x, int y, uint16_t c) {
+  if (x < 0 || x >= OGX || y < 0 || y >= OGY) return;
+  cv->fillRect(x * OP, y * OP, OP, OP, c);
 }
 
 static void drawOrb(AgState s, int frame) {
-  if (!oReady) {
-    for (int y = 0; y < OGY; y++)
-      for (int x = 0; x < OGX; x++) {
-        float dx = x - 15.5f, dy = y - 10.0f;
-        oD[y][x] = sqrtf(dx * dx + dy * dy);
-        oA[y][x] = atan2f(dy, dx) + 3.14159f;
-      }
-    oReady = true;
-  }
   const float TAU = 6.28318f;
-  bool calm = s == AG_IDLE, sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
+  bool sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
   bool eq = s == AG_LISTENING || s == AG_SPEAKING;
   bool busy = s == AG_THINKING || s == AG_TRANSCRIBING || s == AG_CONNECTING;
-  float spin = busy ? 0.35f : happy ? 0.5f : sleep ? 0.02f : eq ? 0.12f : 0.07f;
+  float spin = busy ? 0.30f : happy ? 0.40f : sleep ? 0.03f : eq ? 0.20f : 0.10f;
   float pulse = s == AG_SPEAKING ? 0.5f + 0.5f * fabsf(sinf(frame * 0.9f)) : 0.5f + 0.5f * sinf(frame * 0.35f);
-  float sc = 1.0f + (s == AG_SPEAKING ? 0.07f * pulse : 0.03f * pulse) + (happy ? ((frame % 2) ? 0.08f : 0) : 0);
-  if (sleep) sc = 0.55f + 0.03f * pulse;
-  float amp = s == AG_LISTENING ? 0.2f + min((int)level, 100) / 100.0f * 0.8f : s == AG_SPEAKING ? 0.45f + 0.55f * pulse : 0;
+  float amp = s == AG_LISTENING ? 0.15f + min((int)level, 100) / 100.0f * 0.85f : s == AG_SPEAKING ? 0.4f + 0.6f * pulse : 0;
+  int pct = sleep ? 35 : 100;
 
-  uint16_t cOuter = err ? 0xF800 : sleep ? 0x4010 : 0xF81F;
-  uint16_t cMid = err ? 0xFA00 : sleep ? 0x0210 : 0x07FF;
-  uint16_t cInner = err ? 0xF800 : sleep ? 0x1014 : 0x5A9F;
-  uint16_t cCore = err ? 0xF800 : sleep ? 0x2A9F : (s == AG_SPEAKING ? YELLOW : COL_TEXT);
+  static const uint16_t BODY[4] = {RGB(20, 90, 110), RGB(20, 125, 95), RGB(60, 165, 50), RGB(120, 195, 40)};
+  static const uint16_t EDGE[4] = {RGB(70, 175, 185), RGB(90, 205, 145), RGB(165, 235, 75), RGB(245, 225, 75)};
+  static const uint16_t WILT_BODY[4] = {RGB(90, 25, 25), RGB(120, 40, 25), RGB(150, 70, 25), RGB(170, 90, 30)};
+  static const uint16_t WILT_EDGE[4] = {RGB(200, 60, 50), RGB(230, 90, 50), RGB(240, 140, 50), RGB(250, 190, 70)};
+  static const float BASE[4] = {13.5f, 15.0f, 16.8f, 18.8f};
+  static const float AMPL[4] = {1.3f, 1.7f, 2.0f, 2.2f};
+  static const float FREQ[4] = {0.30f, 0.38f, 0.26f, 0.45f};
+  static const float SPD[4] = {1.0f, -1.3f, 1.7f, -2.1f};
 
   cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
-  for (int y = 0; y < OGY; y++) {
+
+  // sky: twinkling stars at night, a faint dithered glow by day
+  if (sleep) {
+    for (int i = 0; i < 9; i++)
+      if ((frame + i * 3) % 7 < 5) cell((i * 17 + 3) % OGX, (i * 5) % 9, RGB(170, 190, 220));
+  }
+
+  // sun (or moon), half hidden by the hills
+  float sx = 20, sy = 12.5f, R = 5.2f + (s == AG_SPEAKING ? 1.3f * pulse : 0.5f * pulse) + (s == AG_LISTENING ? amp * 1.5f : 0) + (happy ? 1.5f : 0);
+  if (sleep) R = 3.6f;
+  for (int y = 0; y < OGY; y++)
     for (int x = 0; x < OGX; x++) {
-      float d = oD[y][x] / sc, a = oA[y][x];
+      float dx = x - sx, dy = y - sy, d = sqrtf(dx * dx + dy * dy);
       uint16_t c = 0;
-      bool on = false;
-      if (d < 1.6f + 0.5f * pulse) {   // core, brighter in the middle
-        c = d < 0.9f ? cCore : mix565(cCore, cMid, 10);
-        on = true;
-      } else if (eq && d > 3.0f && d < 3.0f + 4.6f * amp * (0.35f + 0.65f * fabsf(sinf(frame * 0.8f + (int)(a * 24 / TAU) * 1.7f)))) {
-        c = mix565(cMid, s == AG_LISTENING ? YELLOW : cOuter, (int)((d - 3.0f) * 3.5f));   // equalizer bars
-        on = ((int)(a * 24 / TAU * 2)) % 2 == 0 || d < 4.0f;   // 1-cell gaps between bars
-      } else if (!eq && fabsf(d - 3.6f) < 0.55f) {   // inner ring: 6 dashes
-        on = ((int)((a + frame * spin * 1.6f) * 6 / TAU)) % 2 == 0;
-        c = cInner;
-      } else if (fabsf(d - 5.7f) < 0.55f) {   // middle ring: 12 dashes, counter-rotating
-        on = ((int)((a - frame * spin) * 12 / TAU + 120)) % 3 != 0;
-        c = cMid;
-      } else if (fabsf(d - 8.0f) < 0.55f) {   // outer ring: 24 fine dashes with a bright sweep
-        on = ((int)((a + frame * spin * 0.6f) * 24 / TAU)) % 2 == 0;
-        c = cOuter;
-        if (busy || happy) {   // a bright comet runs around the outer ring
-          float sweep = fmodf(frame * 0.45f, TAU) , diff = fmodf(a - sweep + TAU * 2, TAU);
-          if (diff < 1.1f) { on = true; c = mix565(COL_TEXT, cOuter, (int)(diff * 14)); }
-        }
-      } else if (fabsf(d - 9.4f) < 0.5f && !sleep) {   // HUD ticks at the four cardinal points
-        float q = fmodf(a, TAU / 4);
-        on = q < 0.12f || q > TAU / 4 - 0.12f;
-        c = COL_DIM + 0x2104;
+      if (d <= R) c = sleep ? RGB(150, 160, 190) : err ? RGB(230, 90, 40) : (d < R * 0.55f ? RGB(255, 245, 140) : (d < R * 0.8f ? RGB(255, 205, 60) : RGB(250, 150, 40)));
+      else if (d <= R + 1.6f && !sleep && ((x + y) % 2 == 0)) c = err ? RGB(110, 40, 30) : RGB(120, 90, 30);   // dithered halo
+      if (c) cell(x, y, c);
+    }
+  if (!sleep) {   // stepped rays
+    int n = 14;
+    for (int i = 0; i < n; i++) {
+      float ang = -3.14159f + (i + 0.5f) * 3.14159f / n + (frame % 2 ? 0.04f : 0);
+      if (!happy && !busy && (i + frame / 2) % 2) continue;   // rays shimmer on and off
+      for (int k = 0; k < 2; k++) {
+        float rr = R + 2.4f + k * 1.6f;
+        cell((int)(sx + rr * cosf(ang) + 0.5f), (int)(sy + rr * sinf(ang) + 0.5f), err ? RGB(200, 90, 40) : RGB(255, 215, 80));
       }
-      if (on) cv->fillRect(OX0 + x * OP, OY0 + y * OP, OP, OP, c);
     }
   }
-  if (happy) {   // sparkles
-    for (int i = 0; i < 6; i++) {
-      float ang = i * 1.047f + frame * 0.6f;
-      int px = OX0 + (int)((15.5f + 10.5f * cosf(ang)) * OP), py = OY0 + (int)((10.0f + 9.0f * sinf(ang)) * OP);
-      cv->fillRect(px, py, OP, OP, (i % 2) ? YELLOW : 0x07E0);
+
+  // hills, back to front
+  int topAt[4][OGX];
+  for (int k = 0; k < 4; k++) {
+    float a = AMPL[k] + amp * (1.0f + k * 0.45f) * 2.2f;
+    uint16_t body = dim565(err ? WILT_BODY[k] : BODY[k], pct), edge = dim565(err ? WILT_EDGE[k] : EDGE[k], pct);
+    for (int x = 0; x < OGX; x++) {
+      float y = BASE[k] + a * sinf(x * FREQ[k] + frame * spin * SPD[k]);
+      if (eq) y -= amp * 1.2f * (1 - k * 0.2f) * fabsf(sinf(x * 0.7f + frame * 0.5f + k));
+      int yt = (int)(y + 0.5f);
+      topAt[k][x] = yt;
+      if (yt < OGY) cv->fillRect(x * OP, yt * OP, OP, (OGY - yt) * OP, body);
+      cell(x, yt, edge);
+    }
+  }
+
+  // flowers on the front hill: a bud while asleep, a bloom otherwise
+  static const int FX[5] = {4, 11, 20, 29, 36};
+  static const uint16_t PET[5] = {RGB(255, 90, 200), RGB(80, 220, 255), RGB(255, 140, 60), RGB(255, 90, 200), RGB(120, 240, 130)};
+  for (int i = 0; i < 5; i++) {
+    int x = FX[i], y0 = topAt[3][x];
+    int sway = (int)lroundf(sinf(frame * spin * 1.5f + i) * (happy ? 1.4f : 0.7f));
+    int h = 3 + (i % 2);
+    uint16_t stem = dim565(err ? RGB(130, 90, 40) : RGB(70, 190, 70), pct);
+    for (int k = 1; k <= h; k++) cell(x + (k > h - 1 ? sway : 0), y0 - k, stem);
+    int hx = x + sway, hy = y0 - h - 1;
+    uint16_t pet = dim565(err ? RGB(120, 80, 40) : PET[i], pct);
+    if (sleep || err) cell(hx, hy, pet);
+    else {
+      cell(hx, hy, RGB(255, 235, 90));
+      cell(hx - 1, hy, pet); cell(hx + 1, hy, pet); cell(hx, hy - 1, pet);
+      if (happy || (frame + i) % 6 < 3) cell(hx, hy + 1, pet);
+    }
+    if (i % 2 == 0) cell(x - 1, y0 - 2, stem);   // a leaf
+  }
+
+  // pollen drifting upwards
+  if (!sleep) {
+    int motes = (eq || happy) ? 10 : 6;
+    for (int i = 0; i < motes; i++) {
+      int px = (i * 13 + frame * (1 + i % 2) + (int)(sinf(frame * 0.3f + i) * 2)) % OGX;
+      int py = 21 - ((frame * (1 + i % 3) + i * 7) % 19);
+      cell(px, py, (i % 3 == 0) ? RGB(255, 245, 160) : (i % 3 == 1) ? RGB(160, 255, 150) : RGB(150, 240, 255));
     }
   }
   if (s == AG_LISTENING) {

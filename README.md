@@ -36,7 +36,7 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
 
 - **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
-- **Jarvis**: núcleo abstracto de píxeles estilo Siri/Jarvis, sin cara: anillos de colores que giran y, al escuchar o hablar, un ecualizador radial; voz de mujer elegante (`nova`).
+- **Solarpunk**: paisaje de píxeles con un sol bajo, colinas de ondas verdes y doradas, flores que florecen y polen flotando; las colinas se agitan con tu voz y con la respuesta. Voz de mujer elegante (`nova`).
 
 Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:
