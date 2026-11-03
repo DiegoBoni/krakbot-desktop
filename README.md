@@ -131,7 +131,10 @@ Los JSON no traen credenciales. Para cada uno:
 2. Asigná tus credenciales en los nodos que las piden:
    - **OpenAI Chat Model**: tu credencial *OpenAI API*.
    - **MCP Client** (opcional, herramientas de Composio): una credencial *Header Auth* con tu clave de
-     Composio. Si no lo querés, borrá el nodo.
+     Composio. Si no lo querés, borrá el nodo. El prompt del agente ya le explica cómo usarlo
+     (buscar la herramienta con `COMPOSIO_SEARCH_TOOLS`, ejecutarla con `COMPOSIO_MULTI_EXECUTE_TOOL`,
+     confirmar antes de enviar o borrar y resumir en voz); si borrás el nodo, sacá también el párrafo
+     "HERRAMIENTAS" del prompt.
 3. Activá el workflow (**Active**) y copiá la **Production URL** del nodo Webhook
    (`https://TU-N8N/webhook/krakbot` o `/webhook/frida`, no la de `webhook-test`) en
    `N8N_WEBHOOK_URL` o `N8N_WEBHOOK_URL_FRIDA`.

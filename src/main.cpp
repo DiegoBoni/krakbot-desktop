@@ -110,6 +110,7 @@ void handleTouch(const TouchEvent &te) {
   if (te.kind == TOUCH_DRAG) {
     // panel-native displacement -> displacement along the screen's current vertical axis
     int ldy = current == POSE_UP ? te.dy : current == POSE_RIGHT ? -te.dx : te.dx;
+    if (current == POSE_RIGHT && agentInHistory()) { agentHistDrag(ldy, false); return; }   // reading: scroll, not volume
     if (!volDrag) {
       if (abs(ldy) < 14) return;
       volDrag = true;
@@ -119,6 +120,7 @@ void handleTouch(const TouchEvent &te) {
     soundSetVolume(v, false);
     fxVolumeShow(v);
   } else if (te.kind == TOUCH_DRAG_END) {
+    if (current == POSE_RIGHT && agentInHistory()) { agentHistDrag(0, true); return; }
     if (volDrag) {
       volDrag = false;
       soundSetVolume(soundVolume(), true);
@@ -163,7 +165,8 @@ void loop() {
     Pose p = classify(acc.x, acc.y, acc.z);
     uint32_t now = millis();
     if (p != candidate) { candidate = p; candidateSince = now; }
-    if (p != POSE_NONE && p != current && now - candidateSince >= HOLD_MS) {
+    bool hold = p == POSE_FLAT && current == POSE_RIGHT && agentBusy();   // agent mid-turn: stay lit until idle
+    if (p != POSE_NONE && p != current && !hold && now - candidateSince >= HOLD_MS) {
       Pose prev = current;
       if (prev == POSE_RIGHT) agentLeave();
       current = p;

@@ -10,3 +10,6 @@ void agentBoot();                  // BOOT: history browser when idle, cancels t
 void agentTouch();                 // screen tap: wakes Krakbot and makes it react; leaves the history
 void agentSkinNext();               // long BOOT: switch character (look + voice)
 void agentRepaint();                // something drew over the screen (overlay): paint everything again
+bool agentInHistory();              // the reading view is open
+void agentHistDrag(int ldy, bool end); // scroll the reading view with a vertical drag
+bool agentBusy();                   // a turn is running: keep the screen on

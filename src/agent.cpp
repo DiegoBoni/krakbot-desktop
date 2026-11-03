@@ -655,14 +655,14 @@ static bool needRepaint = true;
 static char lines[24][LINE_CH + 1];
 static int nLines;
 
-static int wrapInto(char (*lines)[LINE_CH + 1], int maxLines, const char *t) {
+static int wrapInto(char (*lines)[LINE_CH + 1], int maxLines, const char *t, int width = LINE_CH) {
   int nLines = 0;
   const char *p = t;
   while (*p && nLines < maxLines) {
     while (*p == ' ') p++;
     int len = strlen(p);
-    int take = min(len, LINE_CH);
-    if (len > LINE_CH) {
+    int take = min(len, width);
+    if (len > width) {
       int cut = take;
       while (cut > 0 && p[cut] != ' ') cut--;
       if (cut > 0) take = cut;
@@ -677,6 +677,15 @@ static int wrapInto(char (*lines)[LINE_CH + 1], int maxLines, const char *t) {
 
 static void wrapText(const char *t) { nLines = wrapInto(lines, 24, t); }
 
+// Reading view: bigger font than the rest of the UI, one turn per page, scrolled by dragging.
+#define H_FONT u8g2_font_9x15_tr
+#define H_CH 25            // characters per line at 9 px
+#define H_LH 17            // line height
+#define H_TOP 24           // viewport (between header rule and footer rule)
+#define H_BOT 218
+#define H_ROWS ((H_BOT - H_TOP) / H_LH)
+static int histScroll = 0, histLines = 0;
+
 static void drawHistory() {
   Turn t;
   int total, n;
@@ -685,6 +694,18 @@ static void drawHistory() {
   n = (histHead - 1 - histIdx + 2 * HIST_N) % HIST_N;
   t = hist[n];
   portEXIT_CRITICAL(&mux);
+
+  static char ql[6][LINE_CH + 1], al[14][LINE_CH + 1];
+  struct Row { const char *s; uint16_t col; };
+  static Row rows[24];
+  int nq = wrapInto(ql, 6, t.q, H_CH), na = wrapInto(al, 14, t.a, H_CH), r = 0;
+  rows[r++] = {"TU:", YELLOW};
+  for (int i = 0; i < nq; i++) rows[r++] = {ql[i], 0xBDF7};
+  rows[r++] = {SKINS[skinIdx].name, CORAL};
+  for (int i = 0; i < na; i++) rows[r++] = {al[i], COL_TEXT};
+  histLines = r;
+  histScroll = constrain(histScroll, 0, max(0, r - H_ROWS));
+
   gfx->fillScreen(COL_BG);
   gfx->setFont(u8g2_font_pressstart2p_8r);
   gfx->setTextSize(1);
@@ -694,22 +715,42 @@ static void drawHistory() {
   gfx->setCursor(8, 16);
   gfx->print(head);
   gfx->drawFastHLine(0, 22, 240, COL_DIM);
-  static char ql[6][LINE_CH + 1], al[12][LINE_CH + 1];
-  int nq = wrapInto(ql, 5, t.q), na = wrapInto(al, 10, t.a);
-  int y = 38;
-  gfx->setTextColor(YELLOW);
-  gfx->setCursor(8, y); gfx->print("TU:"); y += 11;
-  gfx->setTextColor(0xBDF7);
-  for (int i = 0; i < nq; i++, y += 11) { gfx->setCursor(8, y); gfx->print(ql[i]); }
-  y += 6;
-  gfx->setTextColor(CORAL);
-  gfx->setCursor(8, y); gfx->print("KRAKBOT:"); y += 11;
-  gfx->setTextColor(COL_TEXT);
-  for (int i = 0; i < na; i++, y += 11) { gfx->setCursor(8, y); gfx->print(al[i]); }
+
+  gfx->setFont(H_FONT);
+  for (int i = 0; i < H_ROWS && histScroll + i < r; i++) {
+    gfx->setTextColor(rows[histScroll + i].col);
+    gfx->setCursor(8, H_TOP + 13 + i * H_LH);
+    gfx->print(rows[histScroll + i].s);
+  }
+  if (r > H_ROWS) {   // scroll bar
+    int bh = max(12, (H_BOT - H_TOP) * H_ROWS / r);
+    int by = H_TOP + (H_BOT - H_TOP - bh) * histScroll / (r - H_ROWS);
+    gfx->fillRect(237, by, 3, bh, COL_DIM);
+  }
   gfx->drawFastHLine(0, 220, 240, COL_DIM);
+  gfx->setFont(u8g2_font_pressstart2p_8r);
   gfx->setTextColor(COL_DIM);
   gfx->setCursor(8, 234);
-  gfx->print("BOOT:ANTERIOR  +:VOLVER");
+  gfx->print("BOOT:SIG +:VOLVER");
+}
+
+bool agentInHistory() { return active && histMode; }
+
+// ldy: finger travel along the screen's vertical axis since touch-down (positive = down). Dragging the
+// text up reveals what is below it.
+void agentHistDrag(int ldy, bool end) {
+  static int startScroll = -1;
+  if (!histMode) { startScroll = -1; return; }
+  lastActivity = millis();
+  if (startScroll < 0) startScroll = histScroll;
+  int v = constrain(startScroll - ldy / H_LH, 0, max(0, histLines - H_ROWS));
+  if (v != histScroll) { histScroll = v; histVerSeen = ~0u; }
+  if (end) startScroll = -1;
+}
+
+// True while a turn is in flight (recording, transcribing, thinking or speaking).
+bool agentBusy() {
+  return active && (state == AG_LISTENING || state == AG_TRANSCRIBING || state == AG_THINKING || state == AG_SPEAKING);
 }
 
 static void exitHistory() {
@@ -769,13 +810,14 @@ void agentBoot() {
   if (!active) return;
   lastActivity = millis();
   if (histMode) {
-    if (++histIdx >= histCount) exitHistory(); else histVerSeen = ~0u;
+    if (++histIdx >= histCount) exitHistory(); else { histScroll = 0; histVerSeen = ~0u; }
     return;
   }
   if (state == AG_IDLE || state == AG_ERROR) {
     if (histCount == 0) { pokeUntil = millis() + 900; return; }
     histMode = true;
     histIdx = 0;
+    histScroll = 0;
     histVerSeen = ~0u;
     return;
   }
