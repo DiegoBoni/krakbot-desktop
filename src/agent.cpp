@@ -36,7 +36,7 @@
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern const uint8_t rootca_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
 
-// Each skin is a look plus a voice. Skin 0 is the boyish robot octopus, skin 1 an elegant pixel orb.
+// Each skin is a look plus a voice. Skin 0 is the boyish robot octopus, skin 1 is Frida.
 struct Skin {
   const char *name, *voice, *style;
   float robotMix;      // ring-modulation depth (0 = clean voice)
@@ -47,14 +47,11 @@ static const Skin SKINS[] = {
   {"KRAKEN", "echo",
    "Sos un pulpito robot varón de dibujos animados: voz de nene, aguda, chistosa y juguetona, con un tono levemente metálico y robótico, pausas cortas y entusiasmo exagerado, en español rioplatense.",
    0.4f, 6, 0xE28A},
-  {"AURA", "nova",
-   "Hablá en español rioplatense con voz de mujer elegante, cálida y serena, pausada, refinada y con un toque de misterio.",
-   0.0f, 0, 0xF81F},
-  {"AVATAR", "nova",
-   "Hablá en español rioplatense con voz de chica joven, simpática, pícara y canchera, con un tono relajado y cálido.",
+  {"FRIDA", "nova",
+   "Hablá en español rioplatense con voz de chica joven, simpática, pícara y coqueta, con una sonrisita traviesa, tono canchero, cálido y juguetón.",
    0.0f, 0, 0xFB56},
 };
-#define SKIN_COUNT 3
+#define SKIN_COUNT 2
 static volatile int skinIdx = 0;
 
 enum AgState { AG_IDLE, AG_CONNECTING, AG_LISTENING, AG_TRANSCRIBING, AG_THINKING, AG_SPEAKING, AG_ERROR, AG_SLEEP, AG_HAPPY };
@@ -231,6 +228,7 @@ static String askAgent(const String &msg) {
   http.addHeader("Content-Type", "application/json");
   JsonDocument doc;
   doc["message"] = msg;
+  doc["skin"] = SKINS[skinIdx].name;   // lets the n8n flow switch personality
   String body;
   serializeJson(doc, body);
   int code = http.POST(body);
@@ -460,18 +458,7 @@ static void blk(int gx, int gy, int gw, int gh, uint16_t c) {
 }
 
 static uint32_t frameMs(AgState s) {
-  if (skinIdx == 1) {   // the orb animates faster
-    switch (s) {
-      case AG_LISTENING: return 110;
-      case AG_SPEAKING: return 90;
-      case AG_HAPPY: return 80;
-      case AG_SLEEP: return 500;
-      case AG_ERROR: return 140;
-      case AG_IDLE: return 200;
-      default: return 120;
-    }
-  }
-  if (skinIdx == 2) {   // avatar: blink-friendly timing
+  if (skinIdx == 1) {   // Frida: blink-friendly timing
     switch (s) {
       case AG_LISTENING: return 130;
       case AG_SPEAKING: return 130;
@@ -568,79 +555,7 @@ static void drawKraken(AgState s, int frame) {
 }
 
 
-// ---- skin 1: aura ----------------------------------------------------------------------------------
-// A hollow ring woven from many thin strands that drift out of phase, like a voice made visible.
-// Cyan -> blue -> violet on black, drawn as smooth 1 px hairlines. It swells with your voice while
-// listening and ripples while talking.
-
-#define RGB(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
-#define STRANDS 18
-#define STEPS 120
-
-static uint16_t dim565(uint16_t c, int pct) {
-  int r = (c >> 11) * pct / 100, g = ((c >> 5) & 63) * pct / 100, b = (c & 31) * pct / 100;
-  return (r << 11) | (g << 5) | b;
-}
-
-static void drawOrb(AgState s, int frame) {
-  const float TAU = 6.28318f;
-  bool sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
-  bool eq = s == AG_LISTENING || s == AG_SPEAKING;
-  bool busy = s == AG_THINKING || s == AG_TRANSCRIBING || s == AG_CONNECTING;
-
-  static const uint16_t PAL[6] = {RGB(60, 235, 255), RGB(0, 160, 255), RGB(50, 100, 255), RGB(110, 80, 255), RGB(175, 85, 255), RGB(40, 200, 255)};
-  static const uint16_t PAL_ERR[6] = {RGB(255, 70, 50), RGB(255, 130, 40), RGB(255, 190, 60), RGB(255, 90, 60), RGB(220, 40, 60), RGB(255, 160, 50)};
-  static const float AMPL[5] = {10.0f, 8.0f, 5.5f, 3.5f, 2.5f};     // harmonics k = 2..6
-  static const float SPEED[5] = {0.9f, -1.3f, 1.7f, -2.1f, 2.6f};
-  static const float PHASE[5] = {0.0f, 1.7f, 3.1f, 4.4f, 5.6f};
-
-  float t = frame * (busy ? 0.35f : happy ? 0.5f : sleep ? 0.03f : eq ? 0.22f : 0.10f);
-  float pulse = s == AG_SPEAKING ? 0.5f + 0.5f * fabsf(sinf(frame * 0.9f)) : 0.5f + 0.5f * sinf(frame * 0.35f);
-  float amp = s == AG_LISTENING ? 0.15f + min((int)level, 100) / 100.0f * 0.85f : s == AG_SPEAKING ? 0.4f + 0.6f * pulse : 0;
-  float R = 38.0f + (s == AG_SPEAKING ? 5.0f * pulse : 2.0f * pulse) + amp * 6.0f + (happy ? ((frame % 2) ? 5.0f : 0) : 0);
-  float wob = sleep ? 0.12f : busy ? 0.8f : eq ? 0.8f + amp * 0.9f : happy ? 1.2f : 0.8f;
-  float fan = sleep ? 0.2f : busy ? 0.6f : 1.0f;      // how far the strands drift apart
-  if (sleep) R = 15.0f + pulse;
-  float rot = t * (busy ? 0.35f : 0.06f);
-  const float cx = 120, cy = 66;
-
-  cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
-  for (int i = 0; i < 10; i++)   // sparse dust
-    if ((frame + i * 5) % 9 < 6) cv->drawPixel((i * 53 + 17) % 240, (i * 29 + 5) % 132, dim565(PAL[i % 3], 55));
-
-  for (int i = 0; i < STRANDS; i++) {
-    float u = i / (STRANDS - 1.0f);
-    int bright = sleep ? 38 : (int)(40 + 60 * sinf(3.14159f * u));   // outer strands fade
-    int px = 0, py = 0, fx = 0, fy = 0;
-    for (int j = 0; j <= STEPS; j++) {
-      float th = (j % STEPS) * TAU / STEPS;
-      float r = R + (u - 0.5f) * 11.0f * fan;
-      for (int k = 0; k < 5; k++) r += AMPL[k] * wob * sinf((k + 2) * th + t * SPEED[k] + u * fan * (1.2f + 0.4f * k) + PHASE[k]);
-      if (s == AG_SPEAKING) r += 2.5f * pulse * sinf(9 * th + frame * 1.3f + u * 3);
-      r = constrain(r, 3.0f, 62.0f);
-      int x = (int)(cx + r * cosf(th + rot)), y = (int)(cy + r * 0.98f * sinf(th + rot));
-      if (j == 0) { fx = x; fy = y; }
-      else {
-        float ph = u * 0.7f + th / TAU * 0.6f + t * (busy ? 0.25f : 0.08f);
-        uint16_t c = (err ? PAL_ERR : PAL)[(int)((ph - floorf(ph)) * 6)];
-        cv->drawLine(px, py, j == STEPS ? fx : x, j == STEPS ? fy : y, dim565(c, bright));
-      }
-      px = x; py = y;
-    }
-  }
-  if (happy) {   // sparkles around the ring
-    for (int i = 0; i < 8; i++) {
-      float ang = i * 0.785f + frame * 0.6f;
-      cv->fillCircle((int)(cx + (R + 16) * cosf(ang)), (int)(cy + (R + 12) * sinf(ang)), 2, (i % 2) ? COL_TEXT : PAL[4]);
-    }
-  }
-  if (s == AG_LISTENING) {
-    cv->drawFastHLine(KX, CANVAS_H - 3, 192, COL_DIM);
-    cv->fillRect(KX, CANVAS_H - 5, 192 * min((int)level, 100) / 100, 4, PAL[0]);
-  }
-}
-
-// ---- skin 2: pixel avatar --------------------------------------------------------------------------
+// ---- skin 1: Frida --------------------------------------------------------------------------
 // 46x46 portrait (tools/make_avatar.py) shown at 3x. Eyes and mouth swap between prebuilt frames.
 
 static const uint8_t HEART[6] = {0x1B, 0x3F, 0x3F, 0x1E, 0x0C, 0x04};   // 7 wide, bit 5 = left
@@ -651,7 +566,8 @@ static void drawAvatar(AgState s, int frame) {
   bool sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
   bool eq = s == AG_LISTENING || s == AG_SPEAKING;
   bool busy = s == AG_THINKING || s == AG_TRANSCRIBING || s == AG_CONNECTING;
-  int eye = sleep ? 1 : happy ? 2 : ((!err && frame % 14 == 13) ? 1 : 0);
+  bool cheeky = s == AG_IDLE && frame % 26 >= 21 && frame % 26 <= 23;   // an occasional wink
+  int eye = sleep ? 1 : (happy || cheeky) ? 2 : ((!err && frame % 14 == 13) ? 1 : 0);
   static const uint8_t TALK[6] = {1, 2, 1, 0, 2, 1};
   int mouth = s == AG_SPEAKING ? TALK[frame % 6] : err ? 2 : happy ? 1 : 0;
   const uint8_t *fr = AV_FRAMES[eye * 3 + mouth];
@@ -923,7 +839,7 @@ void agentTick(bool visible) {
   if ((frame != cFrame || s != cSt || lv != cLevel) && now - lastDraw >= 40) {
     lastDraw = now;
     cFrame = frame; cSt = s; cLevel = lv;
-    if (skinIdx == 1) drawOrb(s, frame); else if (skinIdx == 2) drawAvatar(s, frame); else drawKraken(s, frame);
+    if (skinIdx == 1) drawAvatar(s, frame); else drawKraken(s, frame);
     cv->flush();
   }
 

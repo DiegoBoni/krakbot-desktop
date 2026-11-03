@@ -33,11 +33,10 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 
 ## Agente de voz (pose derecha)
 
-Tres skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
+Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
 
 - **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
-- **Aura**: anillo hueco tejido con decenas de hilos finos y suaves que se desfasan (cian → azul → violeta sobre negro). Se agita con tu voz al escuchar y ondula al hablar. Voz de mujer elegante (`nova`).
-- **Avatar**: retrato pixel art de una chica de pelo rosa y azul que parpadea, mueve la boca al hablar, guiña al tocarla y se duerme. Voz joven y pícara (`nova`). Los frames salen de `assets/avatar_source.webp` con `python3 tools/make_avatar.py` (genera `src/avatar_data.h`).
+- **Frida**: retrato pixel art de una chica de pelo rosa y azul, pícara y coqueta: parpadea, guiña de vez en cuando, mueve la boca al hablar, se ríe al tocarla y se duerme. Voz joven y juguetona (`nova`). Los frames salen de `assets/avatar_source.webp` con `python3 tools/make_avatar.py` (genera `src/avatar_data.h`).
 
 Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:
@@ -90,8 +89,8 @@ El flujo está en [`n8n/krakbot-workflow.json`](n8n/krakbot-workflow.json), sin 
 3. Activá el workflow (**Active**) y copiá la **Production URL** del nodo Webhook
    (`https://TU-N8N/webhook/krakbot`, no la de `webhook-test`) en `N8N_WEBHOOK_URL`.
 
-Flujo: Webhook (`POST /krakbot`, recibe `{"message": "..."}`) → AI Agent (GPT-5.1, memoria de ventana
-y personalidad de Kraken) → Respond to Webhook (`{"text": "..."}`). La personalidad se cambia en el
+Flujo: Webhook (`POST /krakbot`, recibe `{"message": "...", "skin": "KRAKEN|FRIDA"}`) → AI Agent (GPT-5.1, memoria de ventana
+y personalidad de Kraken) → Respond to Webhook (`{"text": "..."}`). La personalidad (Kraken o Frida, según el `skin`) se define en el
 *System Message* del nodo AI Agent.
 
 #### 3. Voz

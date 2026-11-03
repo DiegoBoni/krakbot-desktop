@@ -77,19 +77,27 @@ put(closed, [(x, 25) for x in range(11, 17)], DARK)
 eyes = [open_, closed, wink]
 
 # --- mouths -------------------------------------------------------------------------------------
+# The face is turned slightly, its centre line sits near x = 22.5. Mouths are centred there.
+BLUSH = col((255, 150, 172))
+
+
 def mouth(f, kind):
     f = clone(f)
-    rect(f, 22, 31, 29, 35, SKIN)
-    if kind == 0:
-        put(f, [(25, 32), (26, 32), (27, 32)], LIP)
-        put(f, [(24, 31), (28, 31)], LIP)
-    elif kind == 1:
-        rect(f, 25, 32, 27, 33, MOUTH)
-        put(f, [(26, 33)], TONGUE)
-    else:
-        rect(f, 24, 32, 28, 34, MOUTH)
-        rect(f, 25, 34, 27, 34, TONGUE)
-        put(f, [(23, 31), (29, 31)], LIP)
+    rect(f, 17, 30, 29, 35, SKIN)                     # wipe the original smile
+    if kind == 0:     # cheeky smirk: flat on the left, one corner curled up
+        put(f, [(21, 32), (22, 32), (23, 32), (24, 32), (25, 31)], LIP)
+        put(f, [(26, 30)], BLUSH)
+    elif kind == 1:   # small open smile
+        put(f, [(21, 31), (25, 31)], LIP)
+        rect(f, 22, 32, 24, 33, MOUTH)
+        put(f, [(23, 33)], TONGUE)
+    else:             # wide open
+        put(f, [(20, 31), (26, 31)], LIP)
+        rect(f, 21, 32, 25, 34, MOUTH)
+        rect(f, 22, 34, 24, 34, TONGUE)
+    # rosy cheeks on every frame
+    put(f, [(14, 29), (15, 29), (13, 30), (14, 30), (15, 30), (16, 30)], BLUSH)
+    put(f, [(30, 28), (31, 28), (29, 29), (30, 29), (31, 29), (32, 29)], BLUSH)
     return f
 
 
