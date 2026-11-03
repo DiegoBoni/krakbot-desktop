@@ -33,10 +33,11 @@ pio run -t upload --upload-port /dev/cu.usbmodemXXXX
 
 ## Agente de voz (pose derecha)
 
-Dos skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
+Tres skins, con aspecto y voz propios (se cambia manteniendo `BOOT`):
 
 - **Kraken**: pulpo pixelado, voz de nene robótico y juguetón (`echo` + efecto metálico).
 - **Aura**: anillo hueco tejido con decenas de hilos finos y suaves que se desfasan (cian → azul → violeta sobre negro). Se agita con tu voz al escuchar y ondula al hablar. Voz de mujer elegante (`nova`).
+- **Avatar**: retrato pixel art de una chica de pelo rosa y azul que parpadea, mueve la boca al hablar, guiña al tocarla y se duerme. Voz joven y pícara (`nova`). Los frames salen de `assets/avatar_source.webp` con `python3 tools/make_avatar.py` (genera `src/avatar_data.h`).
 
 Ambos se animan en reposo, escuchando, pensando, hablando, error y dormido.
 Mantené apretado `+` y hablá; al soltar:

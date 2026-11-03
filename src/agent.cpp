@@ -7,6 +7,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include "avatar_data.h"
 
 #ifndef GROQ_API_KEY
 #define GROQ_API_KEY ""
@@ -49,8 +50,11 @@ static const Skin SKINS[] = {
   {"AURA", "nova",
    "Hablá en español rioplatense con voz de mujer elegante, cálida y serena, pausada, refinada y con un toque de misterio.",
    0.0f, 0, 0xF81F},
+  {"AVATAR", "nova",
+   "Hablá en español rioplatense con voz de chica joven, simpática, pícara y canchera, con un tono relajado y cálido.",
+   0.0f, 0, 0xFB56},
 };
-#define SKIN_COUNT 2
+#define SKIN_COUNT 3
 static volatile int skinIdx = 0;
 
 enum AgState { AG_IDLE, AG_CONNECTING, AG_LISTENING, AG_TRANSCRIBING, AG_THINKING, AG_SPEAKING, AG_ERROR, AG_SLEEP, AG_HAPPY };
@@ -467,6 +471,17 @@ static uint32_t frameMs(AgState s) {
       default: return 120;
     }
   }
+  if (skinIdx == 2) {   // avatar: blink-friendly timing
+    switch (s) {
+      case AG_LISTENING: return 130;
+      case AG_SPEAKING: return 130;
+      case AG_HAPPY: return 110;
+      case AG_SLEEP: return 700;
+      case AG_ERROR: return 120;
+      case AG_IDLE: return 300;
+      default: return 200;
+    }
+  }
   switch (s) {
     case AG_THINKING: return 180;
     case AG_CONNECTING: return 180;
@@ -622,6 +637,83 @@ static void drawOrb(AgState s, int frame) {
   if (s == AG_LISTENING) {
     cv->drawFastHLine(KX, CANVAS_H - 3, 192, COL_DIM);
     cv->fillRect(KX, CANVAS_H - 5, 192 * min((int)level, 100) / 100, 4, PAL[0]);
+  }
+}
+
+// ---- skin 2: pixel avatar --------------------------------------------------------------------------
+// 46x46 portrait (tools/make_avatar.py) shown at 3x. Eyes and mouth swap between prebuilt frames.
+
+static const uint8_t HEART[6] = {0x1B, 0x3F, 0x3F, 0x1E, 0x0C, 0x04};   // 7 wide, bit 5 = left
+
+static void bar(int x, int cy, int h, uint16_t c) { cv->fillRect(x, cy - h / 2, 4, h, c); }
+
+static void drawAvatar(AgState s, int frame) {
+  bool sleep = s == AG_SLEEP, err = s == AG_ERROR, happy = s == AG_HAPPY;
+  bool eq = s == AG_LISTENING || s == AG_SPEAKING;
+  bool busy = s == AG_THINKING || s == AG_TRANSCRIBING || s == AG_CONNECTING;
+  int eye = sleep ? 1 : happy ? 2 : ((!err && frame % 14 == 13) ? 1 : 0);
+  static const uint8_t TALK[6] = {1, 2, 1, 0, 2, 1};
+  int mouth = s == AG_SPEAKING ? TALK[frame % 6] : err ? 2 : happy ? 1 : 0;
+  const uint8_t *fr = AV_FRAMES[eye * 3 + mouth];
+
+  int bob = sleep ? ((frame % 6) < 3 ? 0 : 3) : happy ? ((frame % 2) ? -4 : 0) : eq ? ((frame % 2) ? 0 : 3) : ((frame % 10) < 5 ? 0 : 3);
+  int shake = err ? ((frame % 2) ? 3 : -3) : 0;
+  const int S = 3, X0 = (240 - AV_N * S) / 2 + shake, Y0 = 1 + (bob > 0 ? bob : 0);
+
+  uint16_t pal[sizeof(AV_PAL) / sizeof(AV_PAL[0])];
+  for (size_t i = 0; i < sizeof(pal) / sizeof(pal[0]); i++) {
+    uint16_t c = AV_PAL[i];
+    if (sleep) {
+      int r = (c >> 11) * 40 / 100, g = ((c >> 5) & 63) * 40 / 100, b = (c & 31) * 40 / 100;
+      c = (r << 11) | (g << 5) | b;
+    }
+    pal[i] = c;
+  }
+  cv->fillRect(0, 0, 240, CANVAS_H, COL_BG);
+  for (int y = 0; y < AV_N; y++) {
+    int py = Y0 + y * S;
+    if (py + S > CANVAS_H) break;
+    for (int x = 0; x < AV_N;) {
+      uint8_t c = fr[y * AV_N + x];
+      if (c == AV_TRANSPARENT) { x++; continue; }
+      int e = x + 1;
+      while (e < AV_N && fr[y * AV_N + e] == c) e++;
+      cv->fillRect(X0 + x * S, py, (e - x) * S, S, pal[c]);
+      x = e;
+    }
+  }
+
+  if (eq) {   // sound bars on both sides
+    float lv = s == AG_LISTENING ? 0.15f + min((int)level, 100) / 100.0f * 0.85f : 0.4f + 0.6f * fabsf(sinf(frame * 0.9f));
+    uint16_t c = s == AG_LISTENING ? YELLOW : 0xFB56;
+    for (int i = 0; i < 3; i++) {
+      int h = (int)((14 + i * 12) * lv * (0.6f + 0.4f * fabsf(sinf(frame * 0.8f + i * 1.3f))));
+      bar(38 - i * 12, 70, max(h, 4), c);
+      bar(198 + i * 12, 70, max(h, 4), c);
+    }
+  }
+  if (busy) {   // thinking dots
+    for (int i = 0; i < 3; i++) cv->fillRect(196 + i * 12, 22, 6, 6, i == frame % 3 ? YELLOW : COL_DIM);
+  }
+  if (happy) {   // hearts floating up
+    for (int k = 0; k < 2; k++) {
+      int hx = k ? 200 : 14, hy = 100 - ((frame * 5 + k * 9) % 70);
+      for (int r = 0; r < 6; r++)
+        for (int c = 0; c < 7; c++)
+          if (HEART[r] & (0x40 >> c)) cv->fillRect(hx + c * 3, hy + r * 3, 3, 3, 0xF81F);
+    }
+  }
+  if (sleep) {   // z z Z drifting up
+    for (int k = 0; k < 3; k++) {
+      int z = 2 + k, zx = 190 + k * 12, zy = 70 - k * 18 - ((frame + k * 2) % 4) * 2;
+      cv->fillRect(zx, zy, z * 3, 2, 0x7BEF);
+      cv->drawLine(zx + z * 3 - 1, zy + 2, zx, zy + z * 3, 0x7BEF);
+      cv->fillRect(zx, zy + z * 3, z * 3, 2, 0x7BEF);
+    }
+  }
+  if (err) {   // red exclamation mark
+    cv->fillRect(206, 40, 6, 26, 0xF800);
+    cv->fillRect(206, 72, 6, 6, 0xF800);
   }
 }
 
@@ -831,7 +923,7 @@ void agentTick(bool visible) {
   if ((frame != cFrame || s != cSt || lv != cLevel) && now - lastDraw >= 40) {
     lastDraw = now;
     cFrame = frame; cSt = s; cLevel = lv;
-    if (skinIdx == 1) drawOrb(s, frame); else drawKraken(s, frame);
+    if (skinIdx == 1) drawOrb(s, frame); else if (skinIdx == 2) drawAvatar(s, frame); else drawKraken(s, frame);
     cv->flush();
   }
 
