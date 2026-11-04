@@ -8,11 +8,14 @@ static const int N = sizeof LEVELS;
 static int idx = N - 1, dir = -1;
 static bool asleep = false, dimmed = false;
 static uint32_t lastPoke = 0;
-static const int DIM_PCT = 6;            // backlight while nobody is looking
 #define DIM_AFTER_MS 20000
 
 static void apply(int percent) { ledcWrite(BL_PIN, asleep ? 0 : percent * 255 / 100); }
-static int shown() { return dimmed ? min((int)LEVELS[idx], DIM_PCT) : LEVELS[idx]; }
+// Idle backlight: a bit under half of the chosen level, never below 20 % so the clock stays readable.
+static int shown() {
+  int l = LEVELS[idx];
+  return dimmed ? min(l, max(20, l * 45 / 100)) : l;
+}
 
 void backlightInit() {
   Preferences p;
