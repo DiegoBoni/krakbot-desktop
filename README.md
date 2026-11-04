@@ -81,9 +81,7 @@ El Pomodoro, el reloj y el clima funcionan solo con el Wi-Fi; las claves de abaj
 | `N8N_WEBHOOK_URL` | URL de producción del webhook de Kraken | n8n, ver abajo | Para el agente |
 | `N8N_WEBHOOK_URL_FRIDA` | URL del webhook de Frida; si queda vacío, Frida usa el de Kraken | n8n, ver abajo | No |
 
-Dejá entre comillas, sin espacios, y no subas nunca este archivo. Las claves quedan grabadas en la memoria
-flash de la placa: si la prestás o la regalás, borrala (`pio run -t erase`) o rotá las claves.
-Si alguna vez pegaste una clave en un chat, un issue o un commit, regenerala.
+Las claves van entre comillas y `secrets.h` nunca se sube al repo.
 
 ## Flujos de n8n (uno por personaje)
 
