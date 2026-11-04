@@ -20,6 +20,7 @@ static bool timeSynced = false;
 static SemaphoreHandle_t radio;   // owner has the right to touch the Wi-Fi state
 
 static bool connectWifi() {
+  setCpuFrequencyMhz(160);   // TLS and the radio need it; everything else idles at 80 MHz
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   for (int i = 0; i < 200 && WiFi.status() != WL_CONNECTED; i++) vTaskDelay(pdMS_TO_TICKS(100));
@@ -73,6 +74,7 @@ static void netTask(void *) {
     }
     WiFi.disconnect(true, false);   // radio off between refreshes to save battery
     WiFi.mode(WIFI_OFF);
+    setCpuFrequencyMhz(80);
     status = ok ? NET_OK : NET_FAIL;
     xSemaphoreGive(radio);
     vTaskDelay(pdMS_TO_TICKS(ok ? REFRESH_OK_MS : REFRESH_FAIL_MS));
@@ -87,7 +89,7 @@ bool netTime(struct tm &t) { return timeSynced && getLocalTime(&t, 0); }
 bool netAcquire(uint32_t timeoutMs) {
   if (strlen(WIFI_SSID) == 0) return false;
   if (xSemaphoreTake(radio, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) return false;
-  if (!connectWifi()) { WiFi.mode(WIFI_OFF); xSemaphoreGive(radio); return false; }
+  if (!connectWifi()) { WiFi.mode(WIFI_OFF); setCpuFrequencyMhz(80); xSemaphoreGive(radio); return false; }
   if (!timeSynced) syncTime();   // certificate checks need a valid clock
   return true;
 }
@@ -95,6 +97,7 @@ bool netAcquire(uint32_t timeoutMs) {
 void netRelease() {
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_OFF);
+  setCpuFrequencyMhz(80);
   xSemaphoreGive(radio);
 }
 

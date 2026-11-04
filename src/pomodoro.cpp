@@ -160,6 +160,7 @@ static void alertFlash() {
 
 static void finishBlock(bool alarm) {
   if (alarm) {
+    backlightPoke();
     soundPlay(mode == FOCUS ? SND_ALARM : SND_BREAK_OVER);
     alertFlash();
   }

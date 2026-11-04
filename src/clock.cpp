@@ -2,6 +2,7 @@
 #include "hw.h"
 #include "net.h"
 #include "sound.h"
+#include "brightness.h"
 #include <Preferences.h>
 #include <time.h>
 
@@ -133,7 +134,7 @@ void clockBackground() {
   struct tm t;
   if (!chimeOn || !netTime(t)) return;
   int key = t.tm_yday * 24 + t.tm_hour;
-  if (t.tm_min == 0 && t.tm_sec < 5 && key != lastKey) { lastKey = key; soundPlay(SND_HOUR); }
+  if (t.tm_min == 0 && t.tm_sec < 5 && key != lastKey) { lastKey = key; backlightPoke(); soundPlay(SND_HOUR); }
 }
 
 // Minimal battery: five thin segments along the bottom edge.

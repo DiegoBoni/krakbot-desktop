@@ -134,6 +134,7 @@ void handleTouch(const TouchEvent &te) {
 }
 
 void setup() {
+  setCpuFrequencyMhz(80);   // the display bus and I2C run off the 80 MHz APB anyway; the radio raises it on demand
   pinMode(BAT_HOLD, OUTPUT);
   digitalWrite(BAT_HOLD, HIGH);
   Serial.begin(115200);
@@ -147,7 +148,7 @@ void setup() {
     gfx->println("IMU no responde");
     while (true) delay(1000);
   }
-  qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G, SensorQMI8658::ACC_ODR_125Hz,
+  qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G, SensorQMI8658::ACC_ODR_62_5Hz,
                           SensorQMI8658::LPF_MODE_0);
   qmi.enableAccelerometer();
   Wire.setClock(400000);
@@ -168,6 +169,7 @@ void loop() {
     bool hold = p == POSE_FLAT && current == POSE_RIGHT;   // agent mode never blanks on its own: it would cut a turn short
     if (p != POSE_NONE && p != current && !hold && now - candidateSince >= HOLD_MS) {
       Pose prev = current;
+      backlightPoke();
       if (prev == POSE_RIGHT) agentLeave();
       current = p;
       if (p == POSE_FLAT || manualOff) { if (!screenOff) goDark(); }
@@ -180,14 +182,17 @@ void loop() {
     }
   }
   TouchEvent te = touchPoll();
+  bool wasDim = backlightDimmed();
+  if (te.kind != TOUCH_NONE) backlightPoke();
   if (te.kind != TOUCH_NONE) {
-    if (!screenOff) handleTouch(te);
+    if (!screenOff) { if (!(wasDim && te.kind == TOUCH_TAP)) handleTouch(te); }   // the tap that wakes a dimmed screen is only a wake-up
     else if (te.kind == TOUCH_TAP && manualOff && current != POSE_FLAT) {   // a tap wakes a PWR-blanked screen
       manualOff = false;
       enterApp(current, true);
     }
   }
   BtnEvent plus = buttonsPoll(BTN_PLUS), boot = buttonsPoll(BTN_BOOT), pwr = buttonsPoll(BTN_PWR);
+  if (plus || boot || pwr) backlightPoke();
   if (Serial && (plus || boot || pwr)) Serial.printf("keys plus=%d boot=%d pwr=%d\n", plus, boot, pwr);
   if (pwr == EV_LONG) fxPowerOff();
   if (pwr == EV_CLICK && current != POSE_FLAT && current != POSE_NONE) {
@@ -214,11 +219,12 @@ void loop() {
     if (boot == EV_CLICK) { backlightCycle(); soundPlay(SND_CLICK); }
     if (plus == EV_CLICK) clockToggleChime();
   }
+  backlightIdleTick(!screenOff && !agentBusy());
   if (fxOverlayTick()) repaintApp();
   bool show = live && !fxOverlayActive();
   agentTick(show && current == POSE_RIGHT);
   pomodoroTick(show && current == POSE_UP);
   clockBackground();
   clockTick(show && current == POSE_LEFT);
-  delay(screenOff ? 40 : 5);   // idle faster polling while the screen is off
+  delay(screenOff ? 100 : 15);   // idle faster polling while the screen is off
 }
