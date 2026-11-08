@@ -9,6 +9,11 @@
   Hecho para la <b>Waveshare ESP32-S3-Touch-LCD-1.54</b> (acelerómetro QMI8658, micrófono y parlante).
 </p>
 
+**krakbot Desktop** es el firmware (PlatformIO + framework Arduino, entorno `ws154`) de un gadget de escritorio con tres apps que
+cambian según la orientación de la placa: **Pomodoro**, **reloj + clima** y un **agente de voz** con personajes (Kraken y Frida).
+El agente es parte de KrakBot Labs: habla con el flujo de n8n del agente KrakBot, donde viven el modelo, la memoria y las herramientas
+(ver [KrakBot Labs](#krakbot-labs)).
+
 > Las capturas de este README son maquetas dibujadas con las mismas medidas que el firmware, no fotos de la placa.
 
 ## Cómo funciona
@@ -217,6 +222,21 @@ Para ver qué pasa por dentro: `pio device monitor` (115200) muestra la transcri
 ## Batería
 CPU a 80 MHz (160 solo con el Wi-Fi encendido), brillo reducido tras 20 s sin tocar, Wi-Fi apagado salvo al refrescar el
 clima (cada 10 min) o en la pose del agente, y pantalla apagada boca arriba. El brillo se cambia con `BOOT` en el reloj.
+
+## Dependencias
+Definidas en `platformio.ini` (placa `esp32-s3-devkitc-1`, flash de 16 MB, PSRAM OPI): GFX Library for Arduino, SensorLib (IMU QMI8658),
+U8g2 (fuentes) y ArduinoJson 7.
+
+## KrakBot Labs
+
+KrakBot Labs es el espacio de experimentos de [DiegoBoni](https://github.com/DiegoBoni) con agentes de IA. Cada proyecto es un experimento distinto:
+
+| Experimento | Repo | Qué es |
+|---|---|---|
+| KrakBot | [KrakBot](https://github.com/DiegoBoni/KrakBot) | Agente: gateway de Telegram hacia agentes de IA por CLI (Claude Code, Antigravity, Codex), equipos multi-agente y HTTP Gateway. Su sitio es [WebKrakBot](https://github.com/DiegoBoni/WebKrakBot). |
+| Desktop | **krakbot-desktop** (este repo) | Gadget de escritorio 8-bit (Waveshare ESP32-S3 1.54") con Pomodoro, reloj/clima y agente de voz vía n8n. |
+| Monitor | [buddy](https://github.com/DiegoBoni/buddy) | KrakBot Monitor: app de barra de menú de macOS que muestra el uso de cuota de Claude Code, más companion ESP32-C6 (repo privado). |
+| Nano | [krakbot-nano](https://github.com/DiegoBoni/krakbot-nano) | Agente de IA embebido en un ESP32-S3 (basado en ESP-Claw). |
 
 ## Imágenes del README
 Se generan con `PRESS_START_2P=/ruta/PressStart2P-Regular.ttf python3 tools/render_readme_images.py`
